@@ -26,6 +26,20 @@ Working folder for the PayPal AI Hackathon on Devpost ("Build what's next with P
 - Sponsor tools are optional (AG Grid, APIMatic, Astropods, Bryntum, Channel3, Elastic, KERNEL,
   Postman, Render, Zapier); some carry their own prizes.
 
+## Judging (equal weight)
+
+Technological implementation (PayPal + AI, non-trivial and working), design (complete product,
+not just a proof of concept), potential impact (specific problem, real audience), innovation,
+presentation (video shows it end-to-end; problem, audience, why it matters).
+
+## Prizes (from the official rules, 2026-10-23)
+
+- 1st $12,000, 2nd $8,000, 3rd $5,000.
+- $5,000 each: Most Creative, Most Impactful, Best Demo Delivery, Best Use of PayPal,
+  Best Use of Agentic Commerce.
+- Sponsor prizes, among others: AG Grid ($5,000 / $2,000 / 3 x $1,000), Bryntum (3 x $1,000),
+  APIMatic (3 x $1,000 + subscription), Channel3 ($1,500), Render (credits).
+
 ## What has to be submitted
 
 1. Text description of features and functionality.
