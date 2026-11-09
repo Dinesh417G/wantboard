@@ -21,6 +21,8 @@ export type BoardItem = {
   city: string;
   createdAt: string;
   sample: boolean;
+  image?: string;
+  matched: boolean;
   mine: boolean;
   forMe: boolean;
 };
@@ -42,7 +44,7 @@ export function BoardGrid({ items, sellerView }: { items: BoardItem[]; sellerVie
     () =>
       items.filter(
         (i) =>
-          (cat === "All" || (cat === "Mine" ? i.forMe || i.mine : i.category === cat)) &&
+          (cat === "All" || (cat === "Mine" ? i.forMe || i.mine || i.matched : i.category === cat)) &&
           (!onlyOpen || i.status === "open" || i.status === "draft" || i.mine),
       ),
     [items, cat, onlyOpen],
@@ -86,6 +88,10 @@ export function BoardGrid({ items, sellerView }: { items: BoardItem[]; sellerVie
                   </Badge>
                   <span className="font-mono text-[10px] text-dim">{i.code}</span>
                 </div>
+                {i.image && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={i.image} alt="" className="mt-4 aspect-[16/9] w-full rounded-xl border border-line object-cover" />
+                )}
                 <h3 className="mt-4 line-clamp-2 font-medium leading-snug group-hover:text-white">{i.title}</h3>
                 <div className="mt-1 text-xs text-dim">{i.category}</div>
                 <div className="mt-auto pt-6">
@@ -111,6 +117,7 @@ export function BoardGrid({ items, sellerView }: { items: BoardItem[]; sellerVie
                       <MapPin className="size-3.5" /> {i.city}
                     </span>
                     {i.mine && <Badge tone="brand">yours</Badge>}
+                    {i.matched && <Badge tone="brand">AI match</Badge>}
                   </div>
                 </div>
               </Link>

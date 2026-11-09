@@ -2,7 +2,7 @@
 // The copilot only drafts and explains; it never makes, accepts or pays anything.
 // If the gateway is unavailable it falls back to deterministic heuristics and says so.
 import "server-only";
-import { CATEGORIES, type Category } from "./types";
+import { CATEGORIES, type Category, type Match, type Party, type WantRequest } from "./types";
 import type { RequestView } from "./dto";
 import { usd } from "./domain/money";
 import { diffTerms, summarizeDiff } from "./domain/offers";
@@ -196,4 +196,47 @@ export async function riskCheck(v: RequestView, threadId?: string): Promise<AiRe
   }
   if (t?.messages.some((m) => m.flags.length)) flags.push({ field: "Chat", severity: "high", explanation: "Someone asked to move payment or contact off Clinch. Payments outside Clinch are not protected." });
   return { source: "heuristic", data: { flags } };
+}
+
+// ---------- matchmaker: connect a new request to the right sellers ----------
+
+const words = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);
+
+export async function matchSellers(r: WantRequest, sellers: Party[]): Promise<Match[]> {
+  const pool = sellers.filter((s) => s.paypalEmail);
+  if (!pool.length) return [];
+  const ai = await ask(
+    MODEL_FAST,
+    `Rank which sellers fit this wanted item. Score 0-100 (category fit, specialty in bio). Exclude clear non-fits (score < 40).
+Item: ${r.title}
+Details: ${r.description}
+Category: ${r.category}
+Sellers: ${JSON.stringify(pool.map((s) => ({ id: s.id, name: s.name, categories: s.categories, bio: s.bio })))}
+JSON: {"matches": [{"id": string, "score": number, "reason": "max 15 words"}]}`,
+    (x) => {
+      const list = Array.isArray((x as { matches?: unknown }).matches) ? (x as { matches: unknown[] }).matches : [];
+      return list
+        .map((m) => m as Record<string, unknown>)
+        .filter((m) => pool.some((s) => s.id === m.id))
+        .map((m) => ({ sellerId: String(m.id), score: Math.max(0, Math.min(100, Math.round(Number(m.score) || 0))), reason: str(m.reason, 140), source: "ai" as const }))
+        .filter((m) => m.score >= 40)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5);
+    },
+  );
+  if (ai && ai.data.length) return ai.data;
+  const want = words(`${r.title} ${r.description} ${r.preferences.join(" ")}`);
+  return pool
+    .map((s) => {
+      const inCat = s.categories.includes(r.category);
+      const overlap = [...words(`${s.bio} ${s.categories.join(" ")}`)].filter((w) => want.has(w));
+      const score = Math.min(99, (inCat ? 60 : 0) + overlap.length * 8);
+      const reason = inCat
+        ? `Sells ${r.category.toLowerCase()}${overlap.length ? `; bio mentions ${overlap.slice(0, 3).join(", ")}` : ""}.`
+        : `Bio mentions ${overlap.slice(0, 3).join(", ")}.`;
+      return { sellerId: s.id, score, reason, source: "heuristic" as const };
+    })
+    .filter((m) => m.score >= 40)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
 }

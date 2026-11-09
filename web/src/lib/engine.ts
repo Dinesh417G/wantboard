@@ -6,6 +6,8 @@ import { Conflict, Forbidden, NotFound, getRequest, id, log, mutate, nowIso, rea
 import { canonical, diffTerms, summarizeDiff, validateTerms, type Terms } from "./domain/offers";
 import { feeBreakdown, usd, parseDollars } from "./domain/money";
 import { scanMessage } from "./domain/scam-shield";
+import { cleanImages } from "./domain/images";
+import { matchSellers } from "./ai";
 import { DISPUTE_RESPONSE_HOURS, MAX_ROUNDS, OFFER_TTL_HOURS } from "./config/site";
 import type { Db, Dispute, Offer, Party, Thread, WantRequest } from "./types";
 
@@ -16,8 +18,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 type Ctx = { db: Db; r: WantRequest; me: Party };
 
-function load(requestId: string, meId: string): Ctx {
-  const db = read();
+async function load(requestId: string, meId: string): Promise<Ctx> {
+  const db = await read();
   const r = getRequest(db, requestId);
   const me = db.parties.find((p) => p.id === meId);
   if (!me) throw new Forbidden("unknown user");
@@ -43,7 +45,7 @@ function expireOffers(r: WantRequest) {
 }
 
 /** Apply a mutation to the fresh copy of the request inside one synchronous write. */
-function commit<T>(requestId: string, fn: (r: WantRequest, db: Db) => T): T {
+function commit<T>(requestId: string, fn: (r: WantRequest, db: Db) => T): Promise<T> {
   return mutate((db) => {
     const r = getRequest(db, requestId);
     expireOffers(r);
@@ -68,7 +70,7 @@ function parseTerms(b: Record<string, unknown>): Terms {
 // ---------- PayPal hold ----------
 
 export async function createHold(requestId: string, meId: string) {
-  const c = load(requestId, meId);
+  const c = await load(requestId, meId);
   mustBuyer(c);
   if (c.r.status !== "draft") throw new Conflict("budget already secured");
   const order = await createAuthorizeOrder(c.r.id, c.r.budgetCents, c.r.title);
@@ -77,23 +79,29 @@ export async function createHold(requestId: string, meId: string) {
 }
 
 export async function confirmHold(requestId: string, meId: string) {
-  const c = load(requestId, meId);
+  const c = await load(requestId, meId);
   mustBuyer(c);
   if (c.r.status !== "draft" || !c.r.paypal.orderId) throw new Conflict("nothing to authorize");
   const auth = await authorizeOrder(c.r.paypal.orderId);
-  return commit(requestId, (r) => {
+  const matched = await matchSellers(c.r, c.db.parties.filter((p) => p.role === "seller"));
+  return commit(requestId, (r, db) => {
     r.paypal.authorizationId = auth.authorizationId;
     r.paypal.authorizationExpires = auth.expires;
     r.status = "open";
+    r.matches = matched;
     log(r, `PayPal is holding ${usd(r.budgetCents)} (authorization ${auth.authorizationId}). Sellers can now make offers.`, "money");
+    if (matched.length) {
+      const names = matched.map((m) => `${db.parties.find((p) => p.id === m.sellerId)?.name} (${m.score})`).join(", ");
+      log(r, `Copilot matched ${matched.length} seller${matched.length === 1 ? "" : "s"} and invited them: ${names}${matched[0].source === "heuristic" ? " [offline heuristic]" : ""}.`);
+    }
     return { status: r.status };
   });
 }
 
 // ---------- Negotiation ----------
 
-export function makeOffer(requestId: string, meId: string, b: Record<string, unknown>) {
-  const c = load(requestId, meId);
+export async function makeOffer(requestId: string, meId: string, b: Record<string, unknown>) {
+  const c = await load(requestId, meId);
   if (c.r.status !== "open") throw new Conflict("this request is not taking offers");
   const t = parseTerms(b);
   const err = validateTerms(t, { maxCents: c.r.budgetCents, today: today() });
@@ -112,7 +120,7 @@ export function makeOffer(requestId: string, meId: string, b: Record<string, unk
       by = "seller";
       const me = db.parties.find((p) => p.id === meId)!;
       if (me.role !== "seller") throw new Forbidden("only sellers can make offers on a request");
-      if (!me.categories.includes(r.category)) throw new Forbidden("you don't sell in this category");
+      if (!me.categories.includes(r.category) && !r.matches?.some((m) => m.sellerId === me.id)) throw new Forbidden("you don't sell in this category");
       thread = r.threads.find((x) => x.sellerId === meId) ?? (() => {
         const nt: Thread = { id: id("t"), sellerId: meId, offers: [], messages: [] };
         r.threads.push(nt);
@@ -134,6 +142,7 @@ export function makeOffer(requestId: string, meId: string, b: Record<string, unk
       status: "open",
       isFinal,
       message,
+      images: cleanImages(b.images, 4),
       createdAt: nowIso(),
       expiresAt: new Date(Date.now() + ttlHours * HOUR).toISOString(),
     };
@@ -164,7 +173,7 @@ export function respondOffer(requestId: string, meId: string, b: Record<string, 
 
 /** Accept the exact version on screen: refuse stale or expired offers. Captures the price. */
 export async function acceptOffer(requestId: string, meId: string, b: Record<string, unknown>) {
-  const c = load(requestId, meId);
+  const c = await load(requestId, meId);
   expireOffers(c.r);
   if (c.r.status !== "open") throw new Conflict("this request is not open");
   const t = c.r.threads.find((x) => x.offers.some((o) => o.id === b.offerId));
@@ -258,7 +267,7 @@ export function ship(requestId: string, meId: string, b: Record<string, unknown>
 }
 
 async function payOut(requestId: string, payoutCents: number, why: string) {
-  const db = read();
+  const db = await read();
   const r = getRequest(db, requestId);
   const t = winningThread(r);
   const seller = db.parties.find((p) => p.id === t.sellerId)!;
@@ -278,8 +287,8 @@ async function payOut(requestId: string, payoutCents: number, why: string) {
 }
 
 export async function release(requestId: string, meId: string | null) {
-  const c = meId ? load(requestId, meId) : null;
-  const r = c?.r ?? getRequest(read(), requestId);
+  const c = meId ? await load(requestId, meId) : null;
+  const r = c?.r ?? getRequest(await read(), requestId);
   if (c) mustBuyer(c);
   if (r.status !== "shipped") throw new Conflict("nothing to release");
   if (!meId && r.delivery!.inspectionEndsAt > nowIso()) throw new Conflict("inspection window still running");
@@ -296,7 +305,7 @@ export async function release(requestId: string, meId: string | null) {
 
 /** Auto-release when the inspection window has passed. Safe to call repeatedly. */
 export async function tick(requestId: string) {
-  const r = getRequest(read(), requestId);
+  const r = getRequest(await read(), requestId);
   if (r.status === "shipped" && r.delivery && r.delivery.inspectionEndsAt <= nowIso()) return release(requestId, null);
   return { status: r.status };
 }
@@ -337,7 +346,7 @@ export function proposeSettlement(requestId: string, meId: string, b: Record<str
 
 /** Buyer accepts the seller's proposal: PayPal partial refund, then payout of the rest. */
 export async function acceptSettlement(requestId: string, meId: string) {
-  const c = load(requestId, meId);
+  const c = await load(requestId, meId);
   mustBuyer(c);
   const r = c.r;
   if (r.status !== "disputed" || !r.dispute?.proposal) throw new Conflict("no settlement to accept");
@@ -367,7 +376,7 @@ export async function acceptSettlement(requestId: string, meId: string) {
 }
 
 export async function cancel(requestId: string, meId: string) {
-  const c = load(requestId, meId);
+  const c = await load(requestId, meId);
   mustBuyer(c);
   const r = c.r;
   if (r.status === "draft") {

@@ -1,10 +1,13 @@
 // What a given viewer is allowed to see. Private limits and other sellers' negotiations are removed here,
 // and the AI copilot is built only from this filtered view, so it can never leak the other side's data.
-import type { Db, Party, Thread, WantRequest } from "./types";
+import type { Db, Match, Party, Thread, WantRequest } from "./types";
 
 export type PartyLite = Pick<Party, "id" | "name" | "handle" | "city" | "role" | "bio" | "categories" | "joinedAt"> & { payoutVerified: boolean };
 
-export type RequestView = Omit<WantRequest, "threads" | "buyerTargetCents"> & {
+export type RequestView = Omit<WantRequest, "threads" | "buyerTargetCents" | "matches"> & {
+  matches?: (Match & { sellerName: string })[];
+  /** Set when the viewer is a seller. */
+  mySellerId?: string;
   threads: (Omit<Thread, "sellerFloorCents"> & { seller: PartyLite })[];
   buyer: PartyLite;
   viewerRole: "buyer" | "seller" | "visitor";
@@ -31,7 +34,7 @@ export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView 
   const visible = role === "buyer" ? r.threads : r.threads.filter((t) => t.sellerId === viewer.id);
   const mine = role === "seller" ? r.threads.find((t) => t.sellerId === viewer.id) : undefined;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { buyerTargetCents, threads, ...rest } = r;
+  const { buyerTargetCents, threads, matches, ...rest } = r;
   // Double-blind reviews: until both sides submit, a viewer sees only their own.
   const isWinningSeller = role === "seller" && !!r.agreement && r.threads.find((t) => t.id === r.agreement!.threadId)?.sellerId === viewer.id;
   const myReviewRole = role === "buyer" ? "buyer" : isWinningSeller ? "seller" : null;
@@ -39,6 +42,10 @@ export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView 
   return {
     ...rest,
     reviews,
+    matches: matches
+      ?.filter((m) => role === "buyer" || m.sellerId === viewer.id)
+      .map((m) => ({ ...m, sellerName: db.parties.find((p) => p.id === m.sellerId)?.name ?? "Seller" })),
+    mySellerId: viewer.role === "seller" ? viewer.id : undefined,
     threads: visible.map(({ sellerFloorCents: _f, ...t }) => ({ ...t, seller: lite(db.parties.find((p) => p.id === t.sellerId)!) })),
     buyer: lite(buyer),
     viewerRole: role,

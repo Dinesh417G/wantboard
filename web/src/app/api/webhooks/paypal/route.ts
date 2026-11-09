@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     res.payout_batch_id,
   ].filter((x): x is string => typeof x === "string");
 
-  mutate((db) => {
+  await mutate((db) => {
     const r = db.requests.find(
       (x) =>
         ids.includes(x.id) ||

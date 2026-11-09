@@ -3,6 +3,7 @@ import { viewerId } from "@/lib/viewer";
 import { code, Forbidden, id, log, mutate, nowIso } from "@/lib/store";
 import { BadInput } from "@/lib/engine";
 import { parseDollars } from "@/lib/domain/money";
+import { cleanImages } from "@/lib/domain/images";
 import { CATEGORIES, type Category, type WantRequest } from "@/lib/types";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
@@ -36,6 +37,7 @@ export const POST = handle(async (req: Request) => {
       neededBy,
       budgetCents,
       preferences,
+      images: cleanImages(b.images, 6),
       buyerId: buyer.id,
       status: "draft",
       createdAt: nowIso(),

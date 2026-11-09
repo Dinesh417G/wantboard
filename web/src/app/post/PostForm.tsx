@@ -6,6 +6,7 @@ import { EyeOff, Loader2, Lock, Sparkles, Wand2 } from "lucide-react";
 import { CATEGORIES } from "@/lib/types";
 import { parseDollars, usd } from "@/lib/domain/money";
 import { Button, Card, Field, Input, Select, Textarea } from "@/components/ui";
+import { PhotoPicker } from "@/components/PhotoPicker";
 
 export function PostForm({ buyerName }: { buyerName: string }) {
   const router = useRouter();
@@ -13,6 +14,7 @@ export function PostForm({ buyerName }: { buyerName: string }) {
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState<string>(CATEGORIES[0]);
   const [budget, setBudget] = useState("");
+  const [images, setImages] = useState<string[]>([]);
   const [ai, setAi] = useState<{ reason: string; source: string } | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -37,7 +39,7 @@ export function PostForm({ buyerName }: { buyerName: string }) {
     setBusy(true);
     setError("");
     const form = Object.fromEntries(new FormData(e.currentTarget));
-    const res = await fetch("/api/requests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+    const res = await fetch("/api/requests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, images }) });
     const out = await res.json();
     if (!res.ok) {
       setBusy(false);
@@ -75,6 +77,7 @@ export function PostForm({ buyerName }: { buyerName: string }) {
             </span>
           </p>
         )}
+        <PhotoPicker value={images} onChange={setImages} max={6} label="Photos or reference images (up to 6)" />
         <Field label="Your preferences" hint="One per line. Sellers see these, and the copilot checks offers against them.">
           <Textarea name="preferences" rows={3} placeholder={"New only, no refurbished\nShips to Austin, TX\nOriginal box"} />
         </Field>

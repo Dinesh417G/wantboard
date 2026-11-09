@@ -10,7 +10,7 @@ type Ctx = { params: Promise<{ action: string }> };
 export const POST = handle(async (req: Request, { params }: Ctx) => {
   const { action } = await params;
   const b = await body(req);
-  const db = read();
+  const db = await read();
   const viewer = viewerIn(db, await viewerId());
   const v = viewRequest(db, getRequest(db, String(b.requestId)), viewer);
   const threadId = typeof b.threadId === "string" ? b.threadId : undefined;

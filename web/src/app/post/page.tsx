@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Post a need" };
 
 export default async function PostPage() {
-  const me = viewerIn(read(), await viewerId());
+  const me = viewerIn(await read(), await viewerId());
   return (
     <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
       <div className="text-xs uppercase tracking-wider text-brand-2">New request</div>

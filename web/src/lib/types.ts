@@ -37,6 +37,7 @@ export type Offer = {
   status: OfferStatus;
   isFinal: boolean;
   message: string;
+  images?: string[];
   createdAt: string;
   expiresAt: string;
 };
@@ -102,6 +103,9 @@ export type WantRequest = {
   neededBy: string;
   budgetCents: number;
   preferences: string[];
+  images?: string[];
+  /** Sellers the AI matchmaker invited, best first. */
+  matches?: Match[];
   buyerId: string;
   status: RequestStatus;
   createdAt: string;
@@ -127,5 +131,7 @@ export type WantRequest = {
     feeCents?: number;
   };
 };
+
+export type Match = { sellerId: string; score: number; reason: string; source: "ai" | "heuristic" };
 
 export type Db = { parties: Party[]; requests: WantRequest[] };

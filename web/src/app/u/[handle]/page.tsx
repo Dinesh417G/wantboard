@@ -11,13 +11,13 @@ type Props = { params: Promise<{ handle: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { handle } = await params;
-  const p = read().parties.find((x) => x.handle === handle);
+  const p = (await read()).parties.find((x) => x.handle === handle);
   return { title: p ? `${p.name} · trust profile` : "Profile" };
 }
 
 export default async function Profile({ params }: Props) {
   const { handle } = await params;
-  const db = read();
+  const db = await read();
   const p = db.parties.find((x) => x.handle === handle);
   if (!p) notFound();
   const s = trustStats(db, p);

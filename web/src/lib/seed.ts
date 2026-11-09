@@ -4,6 +4,9 @@ import crypto from "node:crypto";
 import type { Db, Offer, Party, WantRequest } from "./types";
 import type { Terms } from "./domain/offers";
 import { canonical } from "./domain/offers";
+import { feeBreakdown } from "./domain/money";
+
+const fee = (cents: number) => feeBreakdown(cents).feeCents;
 
 const BUYER_EMAIL = process.env.DEMO_BUYER_EMAIL || "sb-z2cop53757889@personal.example.com";
 const SELLER_EMAIL = process.env.DEMO_SELLER_EMAIL || "sb-z2cop53757889@personal.example.com";
@@ -71,7 +74,7 @@ function closed(id: string, title: string, category: WantRequest["category"], se
       { by: "seller", rating: ratingS, text: "Clear request, paid on time.", at: iso(-agoDays) },
     ],
     events: [{ at: iso(-agoDays), text: "Sample deal (demo data).", kind: "info" }],
-    paypal: { refunds: [] },
+    paypal: { refunds: [], capturedCents: price, feeCents: fee(price), payoutCents: price - fee(price), captureId: "SIMULATED", payoutBatchId: "SIMULATED" },
   };
 }
 
@@ -100,6 +103,10 @@ export function seedDb(): Db {
       createdAt: iso(-3),
       sample: true,
       buyerTargetCents: 115000,
+      matches: [
+        { sellerId: "p_relic", score: 94, reason: "Vintage audio specialist; tests units before shipping.", source: "heuristic" },
+        { sellerId: "p_circuit", score: 62, reason: "Sells electronics; occasional vintage gear.", source: "heuristic" },
+      ],
       threads: [
         {
           id: "t_demo10a",
@@ -145,6 +152,7 @@ export function seedDb(): Db {
       status: "open",
       createdAt: iso(-1),
       sample: true,
+      matches: [{ sellerId: "p_atlas", score: 91, reason: "Certified metals with mill certs; ships from Houston.", source: "heuristic" }],
       threads: [
         {
           id: "t_demo11a",

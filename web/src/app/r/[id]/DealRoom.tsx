@@ -12,6 +12,8 @@ import { useAct } from "./hooks";
 import { Chat, OfferForm, OfferTimeline, draftFrom, type Draft } from "./Negotiation";
 import { Copilot, MoneyTrail, PrivateLimit } from "./Side";
 import { AfterAgreement, AgreementCard, HoldPanel, Stepper } from "./Stages";
+import { Gallery } from "@/components/PhotoPicker";
+import { Sparkles } from "lucide-react";
 
 export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: string; canSell: boolean }) {
   const { act, busy, error, setError } = useAct(v.id);
@@ -99,6 +101,7 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
           {/* Request details */}
           <Card className="p-6">
             <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-fg/90">{v.description}</p>
+            {v.images && v.images.length > 0 && <Gallery urls={v.images} className="mt-5" />}
             {v.preferences.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-2">
                 {v.preferences.map((p) => (
@@ -109,6 +112,31 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
               </div>
             )}
           </Card>
+
+          {v.matches && v.matches.length > 0 && (me === "buyer" || v.matches.some((m) => m.sellerId === v.mySellerId)) && (
+            <Card className="edge p-5">
+              <div className="flex items-center gap-2">
+                <Sparkles className="size-4 text-violet-300" />
+                <span className="font-medium">{me === "buyer" ? "Copilot matched these sellers and invited them" : "Copilot matched you to this request"}</span>
+                <Badge tone={v.matches[0].source === "ai" ? "brand" : "neutral"} className="ml-auto">
+                  {v.matches[0].source === "ai" ? "AI-generated" : "Offline heuristic"}
+                </Badge>
+              </div>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                {v.matches
+                  .filter((m) => me === "buyer" || m.sellerId === v.mySellerId)
+                  .map((m) => (
+                    <div key={m.sellerId} className="flex items-center gap-3 rounded-xl border border-line bg-white/[0.02] p-3">
+                      <span className="num grid size-10 shrink-0 place-items-center rounded-lg bg-brand/15 text-sm text-violet-100">{m.score}</span>
+                      <span className="min-w-0 text-sm">
+                        <span className="block font-medium">{m.sellerName}</span>
+                        <span className="block truncate text-xs text-muted">{m.reason}</span>
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </Card>
+          )}
 
           {v.status === "draft" && me === "buyer" && <HoldPanel v={v} clientId={clientId} act={act} setError={setError} />}
           {v.status === "draft" && me !== "buyer" && <Card className="p-6 text-sm text-muted">The buyer hasn&apos;t secured the budget with PayPal yet.</Card>}

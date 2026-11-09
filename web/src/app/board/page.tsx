@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Live board" };
 
 export default async function Board() {
-  const db = read();
+  const db = await read();
   const me = viewerIn(db, await viewerId());
   const items: BoardItem[] = db.requests
     .filter((r) => r.status !== "draft" || r.buyerId === me.id)
@@ -27,6 +27,8 @@ export default async function Board() {
       city: db.parties.find((p) => p.id === r.buyerId)!.city,
       createdAt: r.createdAt,
       sample: Boolean(r.sample),
+      image: r.images?.[0],
+      matched: r.matches?.some((m) => m.sellerId === me.id) ?? false,
       mine: r.buyerId === me.id,
       forMe: me.role === "seller" && me.categories.includes(r.category),
     }));

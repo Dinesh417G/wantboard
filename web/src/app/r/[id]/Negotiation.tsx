@@ -9,6 +9,7 @@ import { diffTerms } from "@/lib/domain/offers";
 import { feeBreakdown, usd } from "@/lib/domain/money";
 import { Badge, Button, Card, Field, Input, Select, Textarea, cn } from "@/components/ui";
 import { left, useNow } from "./hooks";
+import { Gallery, PhotoPicker } from "@/components/PhotoPicker";
 
 type Thread = RequestView["threads"][number];
 type Act = (action: string, payload?: unknown) => Promise<unknown>;
@@ -101,6 +102,7 @@ export function OfferTimeline({ thread, me, v, act, busy, onCounter }: { thread:
                 </div>
               )}
               {(o.message || o.terms.note) && <p className="mt-3 text-sm text-muted">“{o.message || o.terms.note}”</p>}
+              {o.images && o.images.length > 0 && <Gallery urls={o.images} className="mt-3 sm:grid-cols-4" />}
               {actionable && !mine && (
                 <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">
                   <Button variant="success" size="sm" disabled={!!busy} onClick={() => act("accept", { offerId: o.id, version: o.version })}>
@@ -143,7 +145,7 @@ export function OfferTimeline({ thread, me, v, act, busy, onCounter }: { thread:
   );
 }
 
-export type Draft = { price: string; deliveryDate: string; warrantyMonths: number; inspectionDays: number; condition: string; shipping: string; message: string };
+export type Draft = { price: string; deliveryDate: string; warrantyMonths: number; inspectionDays: number; condition: string; shipping: string; message: string; images: string[] };
 
 export function draftFrom(o?: Offer, fallbackDate?: string): Draft {
   return {
@@ -154,6 +156,7 @@ export function draftFrom(o?: Offer, fallbackDate?: string): Draft {
     condition: o?.terms.condition ?? "new",
     shipping: o?.terms.shipping ?? "included",
     message: "",
+    images: [],
   };
 }
 
@@ -224,6 +227,11 @@ export function OfferForm({
       <Field label="Message" className="mt-4">
         <Textarea rows={2} value={draft.message} onChange={set("message")} placeholder="Why this offer works…" />
       </Field>
+      {role === "seller" && (
+        <div className="mt-4">
+          <PhotoPicker value={draft.images} onChange={(images) => setDraft({ ...draft, images })} max={4} label="Photos of your item (up to 4)" />
+        </div>
+      )}
       {beyond && (
         <p className="mt-3 flex items-center gap-2 rounded-xl border border-amber/30 bg-amber/10 p-2.5 text-xs text-amber-100">
           <ShieldAlert className="size-4" /> This is beyond your private {role === "buyer" ? "target" : "floor"} of {usd(limitCents!)}. Only you see this warning.

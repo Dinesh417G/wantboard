@@ -19,7 +19,7 @@ export function Logo() {
 }
 
 export async function Header() {
-  const db = read();
+  const db = await read();
   const me = viewerIn(db, await viewerId());
   const people = db.parties.map((p) => ({ id: p.id, name: p.name, role: p.role, city: p.city }));
   return (
@@ -28,6 +28,7 @@ export async function Header() {
         <Logo />
         <nav className="hidden items-center gap-1 text-sm md:flex">
           {[
+            ["/dashboard", "Dashboard"],
             ["/board", "Live board"],
             ["/post", "Post a need"],
             ["/#how", "How it works"],
