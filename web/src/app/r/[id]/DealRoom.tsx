@@ -18,7 +18,7 @@ import { Sparkles } from "lucide-react";
 
 const HONOR_MS = 3 * 86_400_000;
 
-export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: string; canSell: boolean }) {
+export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: RequestView; clientId: string; canSell: boolean; holdApproved?: boolean }) {
   const { act, busy, error, setError } = useAct(v.id);
   const me = v.viewerRole === "visitor" ? null : v.viewerRole;
   const winnerId = v.agreement?.threadId;
@@ -165,7 +165,7 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
             </Card>
           )}
 
-          {v.status === "draft" && me === "buyer" && <HoldPanel v={v} clientId={clientId} act={act} setError={setError} />}
+          {v.status === "draft" && me === "buyer" && <HoldPanel v={v} clientId={clientId} act={act} setError={setError} approved={holdApproved} busy={busy} />}
           {v.status === "draft" && me !== "buyer" && <Card className="p-6 text-sm text-muted">The buyer hasn&apos;t secured the budget with PayPal yet.</Card>}
 
           {v.agreement && <AgreementCard v={v} />}

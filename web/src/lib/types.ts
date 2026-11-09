@@ -144,6 +144,8 @@ export type WantRequest = {
   events: { at: string; text: string; kind: "info" | "money" | "warn" }[];
   paypal: {
     orderId?: string;
+    /** How many PayPal orders were created for the hold (a fresh one replaces an expired one). */
+    orderAttempts?: number;
     authorizationId?: string;
     authorizationExpires?: string;
     /** When the current authorization was placed: PayPal guarantees the funds for 3 days from here. */

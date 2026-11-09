@@ -3,7 +3,7 @@
 import "server-only";
 import { canServe, reachShort } from "./domain/location";
 import { acceptDisputeClaim, addTracking, cancelUnclaimedPayout, CARRIERS, disputesForCapture, getDispute, getPayout, provideDisputeEvidence, reauthorize, type Carrier, type PayPalDispute } from "./paypal";
-import { authorizeOrder, captureAuthorization, createAuthorizeOrder, payoutSeller, refundCapture, voidAuthorization } from "./paypal";
+import { PayPalError, authorizeOrder, captureAuthorization, createAuthorizeOrder, orderStatus, payoutSeller, refundCapture, voidAuthorization } from "./paypal";
 import { Conflict, Forbidden, NotFound, getRequest, id, log, mutate, nowIso, read, sha256 } from "./store";
 import { canonical, diffTerms, summarizeDiff, validateTerms, type Terms } from "./domain/offers";
 import { feeBreakdown, usd, parseDollars } from "./domain/money";
@@ -85,9 +85,20 @@ export async function createHold(requestId: string, meId: string) {
   const c = await load(requestId, meId);
   mustBuyer(c);
   if (c.r.status !== "draft") throw new Conflict("budget already secured");
-  const order = await createAuthorizeOrder(c.r.id, c.r.budgetCents, c.r.title, c.r.shipTo);
+  if (c.r.paypal.orderId) {
+    const st = await orderStatus(c.r.paypal.orderId).catch(() => "GONE");
+    // Approved earlier but the hold step didn't finish: finish it instead of asking PayPal again.
+    if (st === "APPROVED") throw new Conflict("You already approved this in PayPal. Press “Place the hold” to finish.");
+    if (st === "CREATED" || st === "PAYER_ACTION_REQUIRED") return { orderId: c.r.paypal.orderId };
+    // Expired, voided or otherwise unusable: create a fresh order below.
+  }
+  const attempt = (c.r.paypal.orderAttempts ?? (c.r.paypal.orderId ? 1 : 0)) + 1;
+  const order = await createAuthorizeOrder(c.r.id, c.r.budgetCents, c.r.title, c.r.shipTo, attempt);
   // Must be awaited: on serverless the function can stop right after the response.
-  await commit(requestId, (r) => void (r.paypal.orderId = order.id));
+  await commit(requestId, (r) => {
+    r.paypal.orderId = order.id;
+    r.paypal.orderAttempts = attempt;
+  });
   return { orderId: order.id };
 }
 
@@ -99,7 +110,21 @@ export async function confirmHold(requestId: string, meId: string, b: Record<str
   // The order id from PayPal's onApprove is a fallback; authorizeOrder checks it belongs to this request.
   const orderId = c.r.paypal.orderId ?? (typeof b.orderId === "string" ? b.orderId : "");
   if (!orderId) throw new Conflict("PayPal order not found. Click the PayPal button again.");
-  const auth = await authorizeOrder(orderId, requestId);
+  let auth;
+  try {
+    auth = await authorizeOrder(orderId, requestId);
+  } catch (e) {
+    // The approval can't be used any more (expired, unknown, not approved): start over with a fresh PayPal order.
+    if (e instanceof PayPalError && (e.status === 404 || e.status === 422)) {
+      await commit(requestId, (r) => {
+        r.paypal.orderAttempts = r.paypal.orderAttempts ?? 1;
+        delete r.paypal.orderId;
+        log(r, `PayPal couldn't use the earlier approval (${e.message.slice(0, 100)}). Approve again to place the hold.`, "warn");
+      });
+      throw new Conflict("That PayPal approval can't be used any more. Click the PayPal button to approve again.");
+    }
+    throw e;
+  }
   const eligible = c.db.parties.filter((p) => p.role === "seller" && canServe(p, c.r));
   // Clinch Pro sellers get priority: a small score boost, then re-rank.
   const matched = (await matchSellers(c.r, eligible))

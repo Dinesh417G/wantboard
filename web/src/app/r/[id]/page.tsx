@@ -4,6 +4,7 @@ import { read } from "@/lib/store";
 import { viewerId, viewerIn } from "@/lib/viewer";
 import { viewRequest } from "@/lib/dto";
 import { DealRoom } from "./DealRoom";
+import { orderStatus } from "@/lib/paypal";
 
 export const dynamic = "force-dynamic";
 
@@ -22,5 +23,10 @@ export default async function RequestPage({ params }: Props) {
   if (!r) notFound();
   const viewer = viewerIn(db, await viewerId());
   const v = viewRequest(db, r, viewer);
-  return <DealRoom v={v} clientId={process.env.PAYPAL_CLIENT_ID ?? ""} canSell={viewer.role === "seller" && (viewer.categories.includes(r.category) || !!r.matches?.some((m) => m.sellerId === viewer.id))} />;
+  // A buyer who approved in PayPal but whose hold step failed gets a one-click "Place the hold".
+  const holdApproved =
+    r.status === "draft" && r.buyerId === viewer.id && !!r.paypal.orderId && !r.sample
+      ? (await orderStatus(r.paypal.orderId).catch(() => "")) === "APPROVED"
+      : false;
+  return <DealRoom v={v} holdApproved={holdApproved} clientId={process.env.PAYPAL_CLIENT_ID ?? ""} canSell={viewer.role === "seller" && (viewer.categories.includes(r.category) || !!r.matches?.some((m) => m.sellerId === viewer.id))} />;
 }

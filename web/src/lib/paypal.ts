@@ -66,7 +66,7 @@ async function call<T = any>(method: string, path: string, body?: unknown, idemp
 const money = (cents: number) => ({ currency_code: "USD", value: toPayPalValue(cents) });
 
 /** Order with intent AUTHORIZE: the buyer's budget is held, not taken. */
-export function createAuthorizeOrder(requestId: string, cents: number, title: string, shipTo?: Address & { name: string }) {
+export function createAuthorizeOrder(requestId: string, cents: number, title: string, shipTo?: Address & { name: string }, attempt = 1) {
   return call<{ id: string; status: string }>(
     "POST",
     "/v2/checkout/orders",
@@ -107,8 +107,14 @@ export function createAuthorizeOrder(requestId: string, cents: number, title: st
         },
       },
     },
-    `order-${requestId}`,
+    attempt > 1 ? `order-${requestId}-${attempt}` : `order-${requestId}`,
   );
+}
+
+/** CREATED / PAYER_ACTION_REQUIRED (waiting for the buyer), APPROVED (buyer approved, hold not placed yet), COMPLETED, VOIDED... */
+export async function orderStatus(orderId: string): Promise<string> {
+  const o = await call("GET", `/v2/checkout/orders/${orderId}`);
+  return String(o.status ?? "");
 }
 
 /** After buyer approval: place the hold. Returns the authorization id. */

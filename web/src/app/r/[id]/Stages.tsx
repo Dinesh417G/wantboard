@@ -51,7 +51,24 @@ export function Stepper({ v }: { v: RequestView }) {
   );
 }
 
-export function HoldPanel({ v, clientId, act, setError }: { v: RequestView; clientId: string; act: Act; setError: (s: string) => void }) {
+export function HoldPanel({ v, clientId, act, setError, approved = false, busy = null }: { v: RequestView; clientId: string; act: Act; setError: (s: string) => void; approved?: boolean; busy?: string | null }) {
+  if (approved)
+    return (
+      <Card className="edge p-6">
+        <div className="flex items-start gap-4">
+          <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-paypal/20 text-sky-200">
+            <Lock className="size-5" />
+          </span>
+          <div className="flex-1">
+            <h2 className="text-lg font-medium">You approved {usd(v.budgetCents)} in PayPal. One step left.</h2>
+            <p className="mt-1 text-sm text-muted">The hold wasn&apos;t placed yet. Place it now: PayPal authorizes {usd(v.budgetCents)}, nothing is charged until you accept an offer.</p>
+            <Button className="mt-4" disabled={!!busy} onClick={() => act("authorize")}>
+              {busy === "authorize" ? <Loader2 className="size-4 animate-spin" /> : <Lock className="size-4" />} Place the hold
+            </Button>
+          </div>
+        </div>
+      </Card>
+    );
   return (
     <Card className="edge p-6">
       <div className="flex items-start gap-4">
