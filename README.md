@@ -26,7 +26,7 @@ Built for the [PayPal AI Hackathon 2026](https://paypalaihackathon.devpost.com/)
 
 ## For judges: try it in 3 minutes
 
-Live demo: **https://clinch-virid.vercel.app** (PayPal sandbox; no real money moves).
+Live demo: **https://clinchdeal.in** (PayPal sandbox; no real money moves).
 
 1. You start as **Maya Chen** (buyer). Use the switcher in the top-right corner to become any buyer or seller.
 2. **Post a need** with photos, then click the PayPal button and log in with the sandbox buyer below.
