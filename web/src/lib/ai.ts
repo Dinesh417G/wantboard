@@ -108,8 +108,18 @@ const arr = (x: unknown) => (Array.isArray(x) ? x.map((v) => str(v, 200)).filter
 /** Compact, viewer-filtered context. Built from RequestView only (no private data of the other side). */
 function context(v: RequestView, threadId?: string) {
   const t = v.threads.find((x) => x.id === threadId) ?? v.threads[0];
+  const last = t?.offers.at(-1);
+  const cmp = (a: number, b: number) => (a > b ? "above" : a < b ? "below" : "equal to");
+  // Numeric facts computed in code: models are unreliable at comparing amounts and dates.
+  const facts = last && {
+    latest_price_vs_max_price: `${usd(last.terms.priceCents)} is ${cmp(last.terms.priceCents, v.budgetCents)} the max price ${usd(v.budgetCents)}`,
+    latest_price_vs_your_private_limit:
+      v.myLimitCents !== undefined ? `${usd(last.terms.priceCents)} is ${cmp(last.terms.priceCents, v.myLimitCents)} your private limit ${usd(v.myLimitCents)}` : null,
+    latest_delivery_vs_needed_by: `${last.terms.deliveryDate} is ${last.terms.deliveryDate > v.neededBy ? "after" : last.terms.deliveryDate < v.neededBy ? "before" : "on"} the needed-by date ${v.neededBy}`,
+  };
   return {
     you_are: v.viewerRole,
+    facts,
     request: { title: v.title, description: v.description, category: v.category, needed_by: v.neededBy, max_price: usd(v.budgetCents), preferences: v.preferences },
     your_private_limit: v.myLimitCents !== undefined ? usd(v.myLimitCents) : null,
     negotiation: t && {
@@ -223,7 +233,7 @@ export type Risk = { flags: { field: string; severity: "low" | "medium" | "high"
 
 export async function riskCheck(v: RequestView, threadId?: string): Promise<AiResult<Risk>> {
   const ctx = context(v, threadId);
-  const r = await ask(MODEL_FAST, `Review the latest offer for risks to the ${v.viewerRole} (vague terms, missing warranty, late delivery vs needed_by, shipping extra, used condition when preferences say new, off-platform payment requests in chat).\n${JSON.stringify(ctx)}\nJSON: {"flags": [{"field": string, "severity": "low"|"medium"|"high", "explanation": string}]}`, (x) => {
+  const r = await ask(MODEL_FAST, `Review the latest offer for risks to the ${v.viewerRole}. Trust the "facts" field for price and date comparisons (vague terms, missing warranty, late delivery vs needed_by, shipping extra, used condition when preferences say new, off-platform payment requests in chat).\n${JSON.stringify(ctx)}\nJSON: {"flags": [{"field": string, "severity": "low"|"medium"|"high", "explanation": string}]}`, (x) => {
     const o = x as Record<string, unknown>;
     const flags = Array.isArray(o.flags) ? o.flags : [];
     return {
