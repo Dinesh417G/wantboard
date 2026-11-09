@@ -7,7 +7,14 @@ import { SITE } from "@/lib/config/site";
 const sans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const mono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3007");
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
+  openGraph: { siteName: SITE.name, type: "website" },
+  twitter: { card: "summary_large_image" },
   title: { default: `${SITE.name} — ${SITE.shortPitch}`, template: `%s · ${SITE.name}` },
   description: SITE.tagline,
 };

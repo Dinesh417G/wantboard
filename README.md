@@ -24,6 +24,28 @@ Built for the [PayPal AI Hackathon 2026](https://paypalaihackathon.devpost.com/)
 - **Demo identities**: switch between the buyer and sellers from the header. Seeded "sample" deals simulate PayPal steps and say so;
   requests you create use the real PayPal sandbox.
 
+## For judges: try it in 3 minutes
+
+Live demo: **https://clinch-virid.vercel.app** (PayPal sandbox; no real money moves).
+
+1. You start as **Maya Chen** (buyer). Use the switcher in the top-right corner to become any buyer or seller.
+2. **Post a need** with photos, then click the PayPal button and log in with the sandbox buyer below.
+   PayPal *authorizes* (holds) the max price.
+3. The **copilot matches sellers** and invites them. Switch to a matched seller, open **Dashboard**, and send an offer.
+4. Switch back to Maya: compare versions, try **Copilot → Suggest counter**, counter, then **Accept & sign**.
+   PayPal captures only the winning price; the rest of the hold is released.
+5. Switch to the seller: **Mark shipped**. Switch to Maya: **Accept & pay seller** → PayPal Payouts.
+6. Every PayPal ID (authorization, capture, refund, payout batch) is listed in the **Money trail**.
+
+Sandbox buyer login (PayPal sandbox personal account, USD):
+
+| Email | Password |
+|---|---|
+| `sb-z2cop53757889@personal.example.com` | _provided in the Devpost submission_ |
+
+The board also has **sample deals** (marked "sample · simulated") to explore negotiation, disputes and reviews
+without PayPal; their PayPal steps are simulated and labelled as such.
+
 ## Why PayPal is the core of it
 
 Reverse marketplaces usually fail on trust: sellers waste time quoting buyers who never pay, and
@@ -44,7 +66,7 @@ Requirements: Node.js 20+, a PayPal Developer account (free sandbox).
 
 ```bash
 cd web
-cp ../.env.example .env.local   # fill in PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET (sandbox)
+cp ../.env.example .env.local   # PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET (sandbox); everything else is optional
 npm install
 npm run dev                     # http://localhost:3000
 ```
@@ -60,8 +82,9 @@ Sandbox test accounts for judges are listed in the Devpost submission.
 
 ## Stack
 
-Next.js 15 (App Router, TypeScript, Tailwind), PayPal REST APIs (sandbox), PayPal JS SDK via
-`@paypal/react-paypal-js`.
+Next.js 15 (App Router, TypeScript, Tailwind v4, Motion), PayPal REST APIs (Orders v2, Authorizations, Captures,
+Refunds, Payouts, Webhooks) and the PayPal JS SDK (`@paypal/react-paypal-js`, Pay Later enabled), Supabase Postgres
+(state behind secret-gated RPCs), Vercel Blob (photos), Google Gemini or Vercel AI Gateway (copilot and matchmaker).
 
 ## Licence
 

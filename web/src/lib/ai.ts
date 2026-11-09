@@ -7,9 +7,34 @@ import type { RequestView } from "./dto";
 import { usd } from "./domain/money";
 import { diffTerms, summarizeDiff } from "./domain/offers";
 
-const GATEWAY = "https://ai-gateway.vercel.sh/v1/chat/completions";
-const MODEL_SMART = process.env.AI_MODEL_SMART ?? "anthropic/claude-sonnet-5.5";
-const MODEL_FAST = process.env.AI_MODEL_FAST ?? "anthropic/claude-haiku-5.5";
+// Provider order: Google Gemini (GEMINI_API_KEY) first, then Vercel AI Gateway (AI_GATEWAY_API_KEY or OIDC on Vercel).
+// Both speak the OpenAI chat-completions format.
+type Provider = { url: string; key: string; smart: string; fast: string; name: string };
+
+function providers(): Provider[] {
+  const list: Provider[] = [];
+  if (process.env.GEMINI_API_KEY)
+    list.push({
+      name: "gemini",
+      url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      key: process.env.GEMINI_API_KEY,
+      smart: process.env.GEMINI_MODEL_SMART ?? "gemini-2.5-flash",
+      fast: process.env.GEMINI_MODEL_FAST ?? "gemini-2.5-flash",
+    });
+  const gw = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN;
+  if (gw)
+    list.push({
+      name: "gateway",
+      url: "https://ai-gateway.vercel.sh/v1/chat/completions",
+      key: gw,
+      smart: process.env.AI_MODEL_SMART ?? "anthropic/claude-sonnet-5.5",
+      fast: process.env.AI_MODEL_FAST ?? "anthropic/claude-haiku-5.5",
+    });
+  return list;
+}
+
+const MODEL_SMART = "smart";
+const MODEL_FAST = "fast";
 
 export type AiResult<T> = { data: T; source: "ai" | "heuristic"; model?: string; note?: string };
 
@@ -18,35 +43,36 @@ Rules: be neutral, honest and concise. Never deceive or pressure the other party
 Never suggest paying outside the platform. Keep suggested prices within the user's private limit when one is given.
 You only draft and explain; the user decides and sends. Reply with JSON only, matching the requested shape.`;
 
-async function ask<T>(model: string, prompt: string, validate: (x: unknown) => T): Promise<AiResult<T> | null> {
-  const key = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN;
-  if (!key) return null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const res = await fetch(GATEWAY, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model,
-          max_tokens: 700,
-          temperature: 0.3,
-          messages: [
-            { role: "system", content: SYSTEM },
-            { role: "user", content: prompt },
-          ],
-        }),
-        signal: AbortSignal.timeout(25_000),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        console.warn("[ai] gateway", res.status, body?.error?.type ?? body?.error?.message);
-        return null;
+async function ask<T>(tier: string, prompt: string, validate: (x: unknown) => T): Promise<AiResult<T> | null> {
+  for (const p of providers()) {
+    const model = tier === MODEL_SMART ? p.smart : p.fast;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(p.url, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${p.key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model,
+            max_tokens: 900,
+            temperature: 0.3,
+            messages: [
+              { role: "system", content: SYSTEM },
+              { role: "user", content: prompt },
+            ],
+          }),
+          signal: AbortSignal.timeout(25_000),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          console.warn(`[ai] ${p.name} ${res.status}`, body?.error?.type ?? body?.error?.message ?? body?.[0]?.error?.message);
+          break; // try the next provider
+        }
+        const text: string = body.choices?.[0]?.message?.content ?? "";
+        const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+        return { data: validate(json), source: "ai", model };
+      } catch (e) {
+        console.warn(`[ai] ${p.name} attempt failed`, (e as Error).message);
       }
-      const text: string = body.choices?.[0]?.message?.content ?? "";
-      const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
-      return { data: validate(json), source: "ai", model };
-    } catch (e) {
-      console.warn("[ai] attempt failed", (e as Error).message);
     }
   }
   return null;

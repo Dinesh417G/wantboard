@@ -46,6 +46,7 @@ export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView 
       ?.filter((m) => role === "buyer" || m.sellerId === viewer.id)
       .map((m) => ({ ...m, sellerName: db.parties.find((p) => p.id === m.sellerId)?.name ?? "Seller" })),
     mySellerId: viewer.role === "seller" ? viewer.id : undefined,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     threads: visible.map(({ sellerFloorCents: _f, ...t }) => ({ ...t, seller: lite(db.parties.find((p) => p.id === t.sellerId)!) })),
     buyer: lite(buyer),
     viewerRole: role,

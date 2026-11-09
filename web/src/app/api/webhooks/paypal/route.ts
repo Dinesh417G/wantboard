@@ -28,7 +28,8 @@ export async function POST(req: Request) {
         Object.values(x.paypal).some((p) => typeof p === "string" && ids.includes(p)) ||
         x.paypal.refunds.some((f) => ids.includes(f.id)),
     );
-    if (r) log(r, `PayPal webhook confirmed: ${event.event_type}`, "money");
+    const tag = `(event ${String(event.id ?? "").slice(0, 40)})`;
+    if (r && !r.events.some((e) => e.text.includes(tag))) log(r, `PayPal webhook confirmed: ${event.event_type} ${tag}`, "money");
   });
   return NextResponse.json({ ok: true });
 }
