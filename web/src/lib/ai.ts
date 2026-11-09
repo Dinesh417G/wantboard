@@ -11,7 +11,7 @@ import { diffTerms, summarizeDiff } from "./domain/offers";
 // Both speak the OpenAI chat-completions format.
 type Provider = { url: string; key: string; smart: string; fast: string; name: string; extra?: Record<string, unknown> };
 
-function providers(): Provider[] {
+export function providers(): Provider[] {
   const list: Provider[] = [];
   if (process.env.GEMINI_API_KEY)
     list.push({
@@ -106,7 +106,7 @@ const str = (x: unknown, max = 600) => (typeof x === "string" ? x.replace(/[‐-
 const arr = (x: unknown) => (Array.isArray(x) ? x.map((v) => str(v, 200)).filter(Boolean).slice(0, 6) : []);
 
 /** Compact, viewer-filtered context. Built from RequestView only (no private data of the other side). */
-function context(v: RequestView, threadId?: string) {
+export function context(v: RequestView, threadId?: string) {
   const t = v.threads.find((x) => x.id === threadId) ?? v.threads[0];
   const last = t?.offers.at(-1);
   const cmp = (a: number, b: number) => (a > b ? "above" : a < b ? "below" : "equal to");

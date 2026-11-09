@@ -11,6 +11,7 @@ import { Badge, Button, Card, cn } from "@/components/ui";
 import { useAct } from "./hooks";
 import { Chat, OfferForm, OfferTimeline, draftFrom, type Draft } from "./Negotiation";
 import { Copilot, MoneyTrail, PrivateLimit } from "./Side";
+import { Agent } from "./Agent";
 import { AfterAgreement, AgreementCard, HoldPanel, Stepper } from "./Stages";
 import { Gallery } from "@/components/PhotoPicker";
 import { Sparkles } from "lucide-react";
@@ -274,6 +275,7 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
         </div>
 
         <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
+          {me && (me === "buyer" || canSell || thread) && v.status !== "cancelled" && <Agent v={v} act={act} busy={busy} />}
           {me && v.status === "open" && (
             <Copilot
               v={v}

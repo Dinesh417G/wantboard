@@ -10,6 +10,8 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // PayPal Agent Toolkit pulls in large SDKs; load it from node_modules at runtime instead of bundling it.
+  serverExternalPackages: ["@paypal/agent-toolkit"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
