@@ -1,78 +1,53 @@
-# PayPal AI Hackathon 2026
+# WantBoard
 
-Working folder for the PayPal AI Hackathon on Devpost ("Build what's next with PayPal and AI").
+**Post what you need. PayPal holds your budget. Sellers compete. Everyone gets paid fairly.**
 
-- Hackathon page: https://paypalaihackathon.devpost.com/
-- Official rules: https://paypalaihackathon.devpost.com/rules
-- My submissions: https://devpost.com/submit-to/31302-paypal-ai-hackathon/manage/submissions
-- PayPal Developer dashboard: https://developer.paypal.com/dashboard/
+WantBoard is a reverse marketplace for hard-to-find items: rare materials, discontinued spare
+parts, collectibles, one-off components. Instead of searching, the buyer posts a request with a
+category, a needed-by date, a maximum price and their preferences. Sellers in that category bid.
+The buyer picks the best deal.
 
-## Status (2026-10-23)
+Built for the [PayPal AI Hackathon 2026](https://paypalaihackathon.devpost.com/).
 
-- Registered on Devpost as Dinesh417G, working solo.
-- PayPal Developer account signed in. The sandbox REST app "Default Application" and two sandbox
-  test accounts (one business, one personal, both India) were created automatically.
-- No project idea chosen yet; nothing built.
+## Why PayPal is the core of it
 
-## Deadline
+Reverse marketplaces usually fail on trust: sellers waste time quoting buyers who never pay, and
+buyers are afraid to pay strangers up front. WantBoard puts PayPal in the middle of every step:
 
-12 Nov 2026, 12:00 PM PT = 13 Nov 2026, 01:30 IST.
+| Step | PayPal API | What happens |
+|---|---|---|
+| Buyer posts a request | Orders v2, `intent: AUTHORIZE` | The max price is **held**, not charged (PayPal balance, card or **Pay Later**). Sellers see "funds held by PayPal". |
+| Buyer accepts a bid | Authorizations `capture` with `final_capture` | Only the **winning price** is taken; the rest of the hold is released. |
+| Buyer confirms delivery | Payouts v1 | The seller is paid by email, minus the 6% platform fee. |
+| Buyer cancels an open request | Authorizations `void` | The hold is released; the buyer is never charged. |
+| Buyer cancels before shipping | Captures `refund` | Full refund. |
+| Any change | Webhooks | Payment events are verified and added to the request's money trail. |
 
-## What has to be built
+## Run it locally
 
-- A new app, or a meaningful update to an existing one, that integrates the PayPal developer
-  platform (free sandbox) and an AI tool, model or platform. PayPal must be central and AI must
-  do real work.
-- Sponsor tools are optional (AG Grid, APIMatic, Astropods, Bryntum, Channel3, Elastic, KERNEL,
-  Postman, Render, Zapier); some carry their own prizes.
+Requirements: Node.js 20+, a PayPal Developer account (free sandbox).
 
-## Judging (equal weight)
+```bash
+cd web
+cp ../.env.example .env.local   # fill in PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET (sandbox)
+npm install
+npm run dev                     # http://localhost:3000
+```
 
-Technological implementation (PayPal + AI, non-trivial and working), design (complete product,
-not just a proof of concept), potential impact (specific problem, real audience), innovation,
-presentation (video shows it end-to-end; problem, audience, why it matters).
+1. **Sellers** page: register a seller with a sandbox PayPal email and a category.
+2. **Post a request** in that category, then secure the budget with the PayPal button and log in
+   with a sandbox **personal** account.
+3. On the request page, switch to **View as seller** and place bids; switch back to **View as
+   buyer** and accept one.
+4. Mark it shipped (seller), confirm delivery (buyer), and watch the money trail.
 
-## Prizes (from the official rules, 2026-10-23)
+Sandbox test accounts for judges are listed in the Devpost submission.
 
-- 1st $12,000, 2nd $8,000, 3rd $5,000.
-- $5,000 each: Most Creative, Most Impactful, Best Demo Delivery, Best Use of PayPal,
-  Best Use of Agentic Commerce.
-- Sponsor prizes, among others: AG Grid ($5,000 / $2,000 / 3 x $1,000), Bryntum (3 x $1,000),
-  APIMatic (3 x $1,000 + subscription), Channel3 ($1,500), Render (credits).
+## Stack
 
-## What has to be submitted
+Next.js 15 (App Router, TypeScript, Tailwind), PayPal REST APIs (sandbox), PayPal JS SDK via
+`@paypal/react-paypal-js`.
 
-1. Text description of features and functionality.
-2. Explanation of the tools used (which model or AI service, and how).
-3. Public GitHub, GitLab or Bitbucket repo, open-source licence visible in the About section,
-   with all source, assets and setup instructions.
-4. Working demo: complete run instructions in the repo or a hosted URL. Mockups don't count.
-   Put the sandbox test-account logins and keys judges need into the setup instructions
-   (sandbox only, never the real PayPal login).
-5. Demo video under 3 minutes, public on YouTube or Vimeo, showing it working, with no
-   third-party copyrighted music.
+## Licence
 
-## Setup checklist (checked 2026-10-23)
-
-Ready:
-- [x] Toolchain: git 2.51, Node 22.18, npm 11, pnpm 11, Python 3.13, Docker CLI 29.8, rtk.
-- [x] GitHub CLI signed in as Dinesh417G (scopes repo, workflow).
-- [x] Vercel CLI signed in as dinesh417g (team "dinesh417g's projects") for a hosted demo URL.
-- [x] PayPal Developer sandbox: app "Default Application", IN business + IN personal test accounts.
-- [x] Repo scaffolding: `.gitignore` (ignores `.env`), `.env.example`, MIT `LICENSE`,
-      `scripts/check-setup.mjs`.
-
-To do:
-- [ ] Owner: copy the sandbox Client ID and Secret (Apps & Credentials > Sandbox > Default
-      Application) into `D:\paypal\.env`, then run
-      `node --env-file-if-exists=.env scripts/check-setup.mjs`. It should print "auth OK".
-- [ ] Owner: in Sandbox > Accounts, create a **US business** and a **US personal** test account
-      (PayPal does no India-domestic payments, so USD flows need US accounts).
-- [ ] AI provider key: none on this PC. Choose with the concept: an Anthropic API key, or Vercel
-      AI Gateway (no key on Vercel, `vercel env pull` locally).
-- [ ] Public GitHub repo (`gh repo create`, MIT licence shows in About): needs the owner's go-ahead.
-- [ ] Screen recorder: no OBS or ffmpeg. Windows Snipping Tool records the screen and Clipchamp
-      edits; or install OBS with winget.
-- [ ] YouTube channel to upload the demo video (owner's Google account).
-- [ ] Concept-specific setup: PayPal APIs to enable, Agent Toolkit / MCP server, sponsor tools.
-      Decide once the idea is fixed. Docker engine was not answering; start it only if needed.
+[MIT](LICENSE)
