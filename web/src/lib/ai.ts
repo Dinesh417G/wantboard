@@ -7,9 +7,9 @@ import type { RequestView } from "./dto";
 import { usd } from "./domain/money";
 import { diffTerms, summarizeDiff } from "./domain/offers";
 
-// Provider order: Google Gemini (GEMINI_API_KEY) first, then Vercel AI Gateway (AI_GATEWAY_API_KEY or OIDC on Vercel).
+// Provider order: Gemini, Groq, OpenRouter, then Vercel AI Gateway. The first one with a key that answers wins.
 // Both speak the OpenAI chat-completions format.
-type Provider = { url: string; key: string; smart: string; fast: string; name: string };
+type Provider = { url: string; key: string; smart: string; fast: string; name: string; extra?: Record<string, unknown> };
 
 function providers(): Provider[] {
   const list: Provider[] = [];
@@ -20,6 +20,24 @@ function providers(): Provider[] {
       key: process.env.GEMINI_API_KEY,
       smart: process.env.GEMINI_MODEL_SMART ?? "gemini-2.5-flash",
       fast: process.env.GEMINI_MODEL_FAST ?? "gemini-2.5-flash",
+    });
+  if (process.env.GROQ_API_KEY)
+    list.push({
+      name: "groq",
+      url: "https://api.groq.com/openai/v1/chat/completions",
+      key: process.env.GROQ_API_KEY,
+      smart: process.env.GROQ_MODEL_SMART ?? "openai/gpt-oss-120b",
+      fast: process.env.GROQ_MODEL_FAST ?? "openai/gpt-oss-20b",
+      // gpt-oss reasons before answering; keep that short and force a JSON object.
+      extra: { reasoning_effort: "low", response_format: { type: "json_object" } },
+    });
+  if (process.env.OPENROUTER_API_KEY)
+    list.push({
+      name: "openrouter",
+      url: "https://openrouter.ai/api/v1/chat/completions",
+      key: process.env.OPENROUTER_API_KEY,
+      smart: process.env.OPENROUTER_MODEL_SMART ?? "meta-llama/llama-3.3-70b-instruct:free",
+      fast: process.env.OPENROUTER_MODEL_FAST ?? "meta-llama/llama-3.3-70b-instruct:free",
     });
   const gw = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN;
   if (gw)
@@ -43,8 +61,12 @@ Rules: be neutral, honest and concise. Never deceive or pressure the other party
 Never suggest paying outside the platform. Keep suggested prices within the user's private limit when one is given.
 You only draft and explain; the user decides and sends. Reply with JSON only, matching the requested shape.`;
 
+/** Providers that refused us (no credit, bad key, rate limit) are skipped for a while instead of slowing every call. */
+const benched = new Map<string, number>();
+
 async function ask<T>(tier: string, prompt: string, validate: (x: unknown) => T): Promise<AiResult<T> | null> {
   for (const p of providers()) {
+    if ((benched.get(p.name) ?? 0) > Date.now()) continue;
     const model = tier === MODEL_SMART ? p.smart : p.fast;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -53,8 +75,9 @@ async function ask<T>(tier: string, prompt: string, validate: (x: unknown) => T)
           headers: { Authorization: `Bearer ${p.key}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             model,
-            max_tokens: 900,
+            max_tokens: 2000,
             temperature: 0.3,
+            ...p.extra,
             messages: [
               { role: "system", content: SYSTEM },
               { role: "user", content: prompt },
@@ -65,6 +88,7 @@ async function ask<T>(tier: string, prompt: string, validate: (x: unknown) => T)
         const body = await res.json().catch(() => ({}));
         if (!res.ok) {
           console.warn(`[ai] ${p.name} ${res.status}`, body?.error?.type ?? body?.error?.message ?? body?.[0]?.error?.message);
+          if ([401, 402, 403, 429].includes(res.status)) benched.set(p.name, Date.now() + 10 * 60_000);
           break; // try the next provider
         }
         const text: string = body.choices?.[0]?.message?.content ?? "";
@@ -78,7 +102,7 @@ async function ask<T>(tier: string, prompt: string, validate: (x: unknown) => T)
   return null;
 }
 
-const str = (x: unknown, max = 600) => (typeof x === "string" ? x.slice(0, max) : "");
+const str = (x: unknown, max = 600) => (typeof x === "string" ? x.replace(/[‐-–]/g, "-").slice(0, max) : "");
 const arr = (x: unknown) => (Array.isArray(x) ? x.map((v) => str(v, 200)).filter(Boolean).slice(0, 6) : []);
 
 /** Compact, viewer-filtered context. Built from RequestView only (no private data of the other side). */

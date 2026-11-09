@@ -2,7 +2,7 @@ import { body, handle } from "@/lib/http";
 import { viewerId, viewerIn } from "@/lib/viewer";
 import { getRequest, NotFound, read } from "@/lib/store";
 import { viewRequest } from "@/lib/dto";
-import { riskCheck, suggestCounter, summarize } from "@/lib/ai";
+import { matchSellers, riskCheck, suggestCounter, summarize } from "@/lib/ai";
 
 type Ctx = { params: Promise<{ action: string }> };
 
@@ -21,6 +21,12 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
       return suggestCounter(v, threadId);
     case "risk":
       return riskCheck(v, threadId);
+    case "match": {
+      // Preview who the matchmaker would invite (read-only).
+      const r = getRequest(db, String(b.requestId));
+      const m = await matchSellers(r, db.parties.filter((p) => p.role === "seller"));
+      return { source: m[0]?.source ?? "heuristic", data: m.map((x) => ({ ...x, seller: db.parties.find((p) => p.id === x.sellerId)?.name })) };
+    }
     default:
       throw new NotFound("unknown copilot action");
   }
