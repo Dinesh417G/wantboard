@@ -19,6 +19,8 @@ const ADMIN = process.env.ADMIN_NOTIFY_EMAIL || "";
 export const siteUrl = () =>
   process.env.NEXT_PUBLIC_SITE_URL ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3007");
 
+export const paypalRedirectUri = () => `${siteUrl()}/api/auth/paypal/callback`;
+
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 function layout(title: string, bodyHtml: string, cta?: { label: string; url: string }) {

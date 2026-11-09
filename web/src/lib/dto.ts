@@ -2,7 +2,7 @@
 // and the AI copilot is built only from this filtered view, so it can never leak the other side's data.
 import type { Db, Match, Party, Thread, WantRequest } from "./types";
 
-export type PartyLite = Pick<Party, "id" | "name" | "handle" | "city" | "role" | "bio" | "categories" | "joinedAt"> & { payoutVerified: boolean };
+export type PartyLite = Pick<Party, "id" | "name" | "handle" | "city" | "role" | "bio" | "categories" | "joinedAt"> & { payoutVerified: boolean; paypalConnected: boolean; paypalVerified: boolean };
 
 export type RequestView = Omit<WantRequest, "threads" | "buyerTargetCents" | "matches"> & {
   matches?: (Match & { sellerName: string })[];
@@ -25,7 +25,9 @@ export const lite = (p: Party): PartyLite => ({
   bio: p.bio,
   categories: p.categories,
   joinedAt: p.joinedAt,
-  payoutVerified: Boolean(p.paypalEmail),
+  payoutVerified: Boolean(p.paypalEmail || p.paypal),
+  paypalConnected: Boolean(p.paypal),
+  paypalVerified: Boolean(p.paypal?.verified),
 });
 
 export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView {

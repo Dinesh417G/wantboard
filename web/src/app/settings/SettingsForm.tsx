@@ -2,18 +2,27 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Loader2 } from "lucide-react";
+import { BadgeCheck, Check, Link2, Loader2, Unlink } from "lucide-react";
 import { CATEGORIES } from "@/lib/types";
 import { Button, Card, Field, Input, Textarea, cn } from "@/components/ui";
 
-type Me = { name: string; city: string; bio: string; role: "buyer" | "seller"; paypalEmail: string; categories: string[]; email: string };
+type Me = { name: string; city: string; bio: string; role: "buyer" | "seller"; paypalEmail: string; categories: string[]; email: string; paypal: { email: string; verified: boolean } | null };
 
-export function SettingsForm({ me }: { me: Me }) {
+export function SettingsForm({ me, note }: { me: Me; note?: { ok: boolean; text: string } }) {
   const router = useRouter();
   const [role, setRole] = useState(me.role);
   const [cats, setCats] = useState<string[]>(me.categories);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [unlinking, setUnlinking] = useState(false);
+
+  async function unlink() {
+    setUnlinking(true);
+    await fetch("/api/auth/paypal/unlink", { method: "POST" });
+    setUnlinking(false);
+    router.replace("/settings");
+    router.refresh();
+  }
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -49,6 +58,31 @@ export function SettingsForm({ me }: { me: Me }) {
           <Textarea name="bio" rows={3} defaultValue={me.bio} maxLength={300} />
         </Field>
       </Card>
+      <Card className="space-y-4 p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="font-medium">PayPal account</div>
+            {me.paypal ? (
+              <p className="mt-1 inline-flex items-center gap-1.5 text-sm text-sky-200">
+                <BadgeCheck className="size-4" /> Connected: {me.paypal.email || "PayPal account"}
+                {me.paypal.verified ? " · verified" : ""}
+              </p>
+            ) : (
+              <p className="mt-1 text-sm text-muted">Connect PayPal to sign in with it, get a verified badge on your trust profile, and receive payouts straight to your account.</p>
+            )}
+          </div>
+          {me.paypal ? (
+            <Button type="button" variant="ghost" onClick={unlink} disabled={unlinking}>
+              {unlinking ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />} Disconnect
+            </Button>
+          ) : (
+            <a href="/api/auth/paypal/start?mode=link" className="inline-flex h-10 shrink-0 items-center gap-2 rounded-xl bg-[#ffc439] px-4 text-sm font-semibold text-[#111] hover:brightness-95">
+              <Link2 className="size-4" /> Connect PayPal
+            </a>
+          )}
+        </div>
+        {note && <p className={note.ok ? "text-sm text-emerald-300" : "text-sm text-rose-200"}>{note.text}</p>}
+      </Card>
       <Card className="space-y-5 p-6">
         <div className="flex gap-2">
           {(["buyer", "seller"] as const).map((r) => (
@@ -57,8 +91,8 @@ export function SettingsForm({ me }: { me: Me }) {
             </button>
           ))}
         </div>
-        <Field label="PayPal email for payouts" hint="PayPal sandbox account while Clinch runs in demo mode.">
-          <Input name="paypalEmail" type="email" defaultValue={me.paypalEmail} required={role === "seller"} />
+        <Field label="PayPal email for payouts" hint={me.paypal ? "Not used while PayPal is connected: payouts go to the connected account." : "PayPal sandbox account while Clinch runs in demo mode."}>
+          <Input name="paypalEmail" type="email" defaultValue={me.paypalEmail} required={role === "seller" && !me.paypal} />
         </Field>
         {role === "seller" && (
           <div>

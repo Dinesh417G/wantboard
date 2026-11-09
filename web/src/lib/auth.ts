@@ -5,6 +5,8 @@ import { cookies } from "next/headers";
 
 export const SESSION_COOKIE = "clinch_session";
 export const SIGNUP_COOKIE = "clinch_signup";
+/** CSRF state for Log in with PayPal (10 minutes). */
+export const PP_STATE_COOKIE = "clinch_pp_state";
 const SESSION_DAYS = 30;
 
 function secret(): string {

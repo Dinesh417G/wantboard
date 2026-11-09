@@ -299,6 +299,7 @@ async function payOut(requestId: string, payoutCents: number, why: string) {
     const out = await payoutSeller({
       batchKey: `payout-${r.id}`,
       email: seller.paypalEmail,
+      payerId: seller.paypal?.payerId,
       cents: payoutCents,
       note: `Clinch: "${r.title}". ${why}`,
     });

@@ -40,9 +40,9 @@ export default async function Profile({ params }: Props) {
               <span className="inline-flex items-center gap-1.5">
                 <CalendarDays className="size-4" /> member since {p.joinedAt.slice(0, 7)}
               </span>
-              {p.paypalEmail && (
+              {(p.paypalEmail || p.paypal) && (
                 <span className="inline-flex items-center gap-1.5 text-sky-200">
-                  <BadgeCheck className="size-4" /> PayPal payouts linked
+                  <BadgeCheck className="size-4" /> {p.paypal?.verified ? "PayPal verified" : p.paypal ? "PayPal connected" : "PayPal payouts linked"}
                 </span>
               )}
             </div>

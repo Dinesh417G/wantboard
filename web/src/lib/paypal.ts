@@ -128,8 +128,8 @@ export async function refundCapture(captureId: string, note: string, cents?: num
   return { refundId: res.id as string, status: res.status as string };
 }
 
-/** Pay the seller (winning price minus platform fee) by email. */
-export async function payoutSeller(opts: { batchKey: string; email: string; cents: number; note: string }) {
+/** Pay the seller (winning price minus platform fee): to their linked PayPal account (payer ID) if they have one, else by email. */
+export async function payoutSeller(opts: { batchKey: string; email: string; payerId?: string; cents: number; note: string }) {
   const res = await call(
     "POST",
     "/v1/payments/payouts",
@@ -141,8 +141,8 @@ export async function payoutSeller(opts: { batchKey: string; email: string; cent
       },
       items: [
         {
-          recipient_type: "EMAIL",
-          receiver: opts.email,
+          recipient_type: opts.payerId ? "PAYPAL_ID" : "EMAIL",
+          receiver: opts.payerId || opts.email,
           amount: { currency: "USD", value: toPayPalValue(opts.cents) },
           note: opts.note.slice(0, 4000),
           sender_item_id: opts.batchKey,
@@ -173,4 +173,50 @@ export async function verifyWebhook(headers: Headers, rawEvent: string, webhookI
   });
   const out = await res.json().catch(() => ({}));
   return { verification_status: String(out.verification_status ?? `HTTP ${res.status}`), detail: res.ok ? undefined : out };
+}
+
+// ---------- Log in with PayPal (OpenID Connect) ----------
+
+const LOGIN_SCOPES = "openid profile email https://uri.paypal.com/services/paypalattributes";
+
+/** Where the browser goes to sign in with PayPal (sandbox). */
+export function paypalLoginUrl(state: string, redirectUri: string) {
+  const q = new URLSearchParams({
+    flowEntry: "static",
+    client_id: creds().id,
+    response_type: "code",
+    scope: LOGIN_SCOPES,
+    redirect_uri: redirectUri,
+    state,
+  });
+  return `https://www.sandbox.paypal.com/signin/authorize?${q}`;
+}
+
+export type PayPalIdentity = { payerId: string; email: string; emailConfirmed: boolean; name: string; verified: boolean };
+
+/** Exchange the authorization code for a user token, then read the PayPal account's identity. */
+export async function paypalIdentity(code: string): Promise<PayPalIdentity> {
+  const { id, secret } = creds();
+  const tok = await fetch(`${BASE}/v1/oauth2/token`, {
+    method: "POST",
+    headers: { Authorization: "Basic " + Buffer.from(`${id}:${secret}`).toString("base64"), "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "authorization_code", code }),
+    cache: "no-store",
+  });
+  const t = await tok.json().catch(() => ({}));
+  if (!tok.ok || !t.access_token) throw new Error(`PayPal login failed: ${tok.status} ${t.error_description ?? t.error ?? ""}`.trim());
+  const res = await fetch(`${BASE}/v1/identity/oauth2/userinfo?schema=paypalv1.1`, { headers: { Authorization: `Bearer ${t.access_token}` }, cache: "no-store" });
+  const u = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`PayPal userinfo failed: ${res.status}`);
+  const emails: { value: string; primary?: boolean; confirmed?: boolean }[] = Array.isArray(u.emails) ? u.emails : u.email ? [{ value: u.email, primary: true, confirmed: u.email_verified }] : [];
+  const main = emails.find((e) => e.primary) ?? emails[0];
+  const payerId = String(u.payer_id ?? "");
+  if (!payerId) throw new Error("PayPal did not return an account ID");
+  return {
+    payerId,
+    email: String(main?.value ?? "").toLowerCase(),
+    emailConfirmed: main?.confirmed !== false,
+    name: String(u.name ?? [u.given_name, u.family_name].filter(Boolean).join(" ")).trim(),
+    verified: u.verified_account === true || u.verified_account === "true",
+  };
 }

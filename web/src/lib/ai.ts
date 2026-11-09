@@ -263,7 +263,7 @@ export async function riskCheck(v: RequestView, threadId?: string): Promise<AiRe
 const words = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);
 
 export async function matchSellers(r: WantRequest, sellers: Party[]): Promise<Match[]> {
-  const pool = sellers.filter((s) => s.paypalEmail);
+  const pool = sellers.filter((s) => s.paypalEmail || s.paypal);
   if (!pool.length) return [];
   const ai = await ask(
     MODEL_FAST,

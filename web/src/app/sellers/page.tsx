@@ -51,9 +51,9 @@ export default async function Sellers() {
                 <span className="inline-flex items-center gap-1">
                   <Star className="size-3.5 fill-amber text-amber" /> <span className="num text-fg">{s.avgRating?.toFixed(1) ?? "—"}</span>
                 </span>
-                {p.paypalEmail && (
+                {(p.paypalEmail || p.paypal) && (
                   <span className="inline-flex items-center gap-1 text-sky-200">
-                    <BadgeCheck className="size-3.5" /> PayPal
+                    <BadgeCheck className="size-3.5" /> {p.paypal?.verified ? "PayPal verified" : "PayPal"}
                   </span>
                 )}
                 <ArrowRight className="ml-auto size-4 text-dim transition group-hover:translate-x-0.5 group-hover:text-fg" />

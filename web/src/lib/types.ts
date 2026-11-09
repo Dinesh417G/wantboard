@@ -29,7 +29,11 @@ export type Party = {
   email?: string;
   /** Seeded demo account: anyone can sign in as it from the demo menu. */
   demo?: boolean;
+  /** Linked via Log in with PayPal: payouts go to this PayPal account by payer ID. */
+  paypal?: PayPalLink;
 };
+
+export type PayPalLink = { payerId: string; email: string; verified: boolean; linkedAt: string };
 
 export type OfferStatus = "open" | "countered" | "accepted" | "rejected" | "superseded" | "withdrawn" | "expired";
 
