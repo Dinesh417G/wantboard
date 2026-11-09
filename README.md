@@ -1,18 +1,33 @@
-# WantBoard
+# Clinch
 
 **Post what you need. PayPal holds your budget. Sellers compete. Everyone gets paid fairly.**
 
-WantBoard is a reverse marketplace for hard-to-find items: rare materials, discontinued spare
+Clinch is a reverse marketplace for hard-to-find items: rare materials, discontinued spare
 parts, collectibles, one-off components. Instead of searching, the buyer posts a request with a
 category, a needed-by date, a maximum price and their preferences. Sellers in that category bid.
 The buyer picks the best deal.
 
 Built for the [PayPal AI Hackathon 2026](https://paypalaihackathon.devpost.com/).
 
+## What's inside
+
+- **Live board**: buyers post a need (item, category, needed-by date, max price, preferences); AI suggests the category.
+- **Deal room**: sellers send versioned offers (price, delivery, warranty, condition, shipping, inspection days). Every counter
+  shows a diff ("Price −4.5%, delivery +3 days"), offers expire for real, and "Accept" names the exact version, so stale offers are refused.
+- **Private limits**: buyer target / seller floor, visible only to their owner and their own copilot.
+- **AI copilot** (Vercel AI Gateway, Claude): summarize, suggest a counter inside your private limit, risk-check the latest offer.
+  Drafts only; it never sends, accepts or pays. Falls back to labelled heuristics if the gateway is unavailable.
+- **Agreement fingerprint**: the accepted terms are hashed (SHA-256 of canonical JSON) and shown to both sides.
+- **Inspection window, disputes, settlements**: payment freezes on dispute; seller proposes a partial refund; buyer accepts.
+- **Scam shield**: flags Zelle/Venmo/gift cards, phone numbers and "pay me directly" in chat.
+- **Trust profile**: transparent score from paid, completed deals; double-blind reviews.
+- **Demo identities**: switch between the buyer and sellers from the header. Seeded "sample" deals simulate PayPal steps and say so;
+  requests you create use the real PayPal sandbox.
+
 ## Why PayPal is the core of it
 
 Reverse marketplaces usually fail on trust: sellers waste time quoting buyers who never pay, and
-buyers are afraid to pay strangers up front. WantBoard puts PayPal in the middle of every step:
+buyers are afraid to pay strangers up front. Clinch puts PayPal in the middle of every step:
 
 | Step | PayPal API | What happens |
 |---|---|---|

@@ -22,8 +22,13 @@ export async function POST(req: Request) {
   ].filter((x): x is string => typeof x === "string");
 
   mutate((db) => {
-    const r = db.requests.find((x) => ids.includes(x.id) || Object.values(x.paypal).some((p) => p && ids.includes(p)));
-    if (r) log(r, `PayPal webhook: ${event.event_type}`);
+    const r = db.requests.find(
+      (x) =>
+        ids.includes(x.id) ||
+        Object.values(x.paypal).some((p) => typeof p === "string" && ids.includes(p)) ||
+        x.paypal.refunds.some((f) => ids.includes(f.id)),
+    );
+    if (r) log(r, `PayPal webhook confirmed: ${event.event_type}`, "money");
   });
   return NextResponse.json({ ok: true });
 }

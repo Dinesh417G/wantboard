@@ -1,68 +1,131 @@
+import type { Terms } from "./domain/offers";
+import type { ScamFlag } from "./domain/scam-shield";
+
 export const CATEGORIES = [
   "Electronics & components",
   "Industrial & raw materials",
-  "Rare & collectibles",
-  "Books & media",
-  "Fashion & handmade",
-  "Home & tools",
   "Auto & spare parts",
+  "Rare & collectibles",
+  "Vintage & antiques",
+  "Tools & machinery",
+  "Fashion & handmade",
   "Other",
 ] as const;
 export type Category = (typeof CATEGORIES)[number];
 
-export const PLATFORM_FEE = 0.06;
+export type Role = "buyer" | "seller";
 
-export type Seller = {
+export type Party = {
   id: string;
   name: string;
+  handle: string;
+  city: string;
+  role: Role;
   paypalEmail: string;
   categories: Category[];
+  bio: string;
+  joinedAt: string;
+};
+
+export type OfferStatus = "open" | "countered" | "accepted" | "rejected" | "superseded" | "withdrawn" | "expired";
+
+export type Offer = {
+  id: string;
+  version: number;
+  by: Role;
+  terms: Terms;
+  status: OfferStatus;
+  isFinal: boolean;
+  message: string;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type Message = {
+  id: string;
+  by: Role | "system";
+  text: string;
+  flags: ScamFlag[];
   createdAt: string;
 };
 
-export type Bid = {
+/** One negotiation between the buyer and one seller. */
+export type Thread = {
   id: string;
   sellerId: string;
-  price: number;
-  deliveryDate: string;
-  note: string;
+  offers: Offer[];
+  messages: Message[];
+  /** Seller's private walk-away floor. Never shown to the buyer, never in the buyer's AI context. */
+  sellerFloorCents?: number;
+};
+
+export type Agreement = {
+  threadId: string;
+  offerId: string;
+  version: number;
+  terms: Terms;
+  termsHash: string;
+  buyerSignedAt: string;
+  sellerSignedAt: string;
   createdAt: string;
 };
 
+export type DisputeReason = "not_delivered" | "not_as_described" | "damaged" | "partial" | "other";
+
+export type Dispute = {
+  reason: DisputeReason;
+  description: string;
+  desired: "full_refund" | "partial_refund";
+  openedAt: string;
+  respondBy: string;
+  proposal?: { refundCents: number; note: string; at: string };
+  resolution?: { refundCents: number; payoutCents: number; at: string; how: "agreed" | "buyer_withdrew" };
+};
+
+export type Review = { by: Role; rating: number; text: string; at: string };
+
 export type RequestStatus =
-  | "draft" // posted, budget not yet secured
-  | "open" // budget held by PayPal, sellers can bid
-  | "awarded" // winning price captured, waiting for delivery
-  | "shipped"
-  | "completed" // buyer confirmed, seller paid out
-  | "cancelled" // hold voided or payment refunded
-  ;
+  | "draft" // posted, budget not yet held
+  | "open" // PayPal holds the budget; sellers negotiate
+  | "agreed" // offer accepted, agreement signed, winning price captured
+  | "shipped" // seller submitted delivery proof, inspection window running
+  | "disputed"
+  | "completed" // seller paid out
+  | "cancelled"; // hold voided or payment refunded
 
 export type WantRequest = {
   id: string;
+  code: string;
   title: string;
   description: string;
   category: Category;
   neededBy: string;
-  budget: number;
+  budgetCents: number;
   preferences: string[];
-  buyerName: string;
+  buyerId: string;
   status: RequestStatus;
   createdAt: string;
-  bids: Bid[];
-  events: { at: string; text: string }[];
+  /** Seeded example: PayPal calls are simulated and labelled as such. */
+  sample?: boolean;
+  /** Buyer's private target price. Never shown to sellers. */
+  buyerTargetCents?: number;
+  threads: Thread[];
+  agreement?: Agreement;
+  delivery?: { note: string; tracking: string; at: string; inspectionEndsAt: string };
+  dispute?: Dispute;
+  reviews: Review[];
+  events: { at: string; text: string; kind: "info" | "money" | "warn" }[];
   paypal: {
     orderId?: string;
     authorizationId?: string;
     authorizationExpires?: string;
     captureId?: string;
-    refundId?: string;
+    capturedCents?: number;
+    refunds: { id: string; cents: number; status: string }[];
     payoutBatchId?: string;
+    payoutCents?: number;
+    feeCents?: number;
   };
-  winningBidId?: string;
-  fee?: number;
-  sellerPayout?: number;
-  shipNote?: string;
 };
 
-export type Db = { sellers: Seller[]; requests: WantRequest[] };
+export type Db = { parties: Party[]; requests: WantRequest[] };

@@ -1,5 +1,6 @@
 // Server-side PayPal REST client (sandbox only). Never import this from a client component.
 import "server-only";
+import { toPayPalValue } from "./domain/money";
 
 const BASE = "https://api-m.sandbox.paypal.com";
 
@@ -60,10 +61,10 @@ async function call<T = any>(method: string, path: string, body?: unknown, idemp
   return json as T;
 }
 
-const money = (value: number) => ({ currency_code: "USD", value: value.toFixed(2) });
+const money = (cents: number) => ({ currency_code: "USD", value: toPayPalValue(cents) });
 
 /** Order with intent AUTHORIZE: the buyer's budget is held, not taken. */
-export function createAuthorizeOrder(requestId: string, amount: number, title: string) {
+export function createAuthorizeOrder(requestId: string, cents: number, title: string) {
   return call<{ id: string; status: string }>(
     "POST",
     "/v2/checkout/orders",
@@ -73,14 +74,14 @@ export function createAuthorizeOrder(requestId: string, amount: number, title: s
         {
           reference_id: requestId,
           custom_id: requestId,
-          description: `WantBoard budget hold: ${title}`.slice(0, 127),
-          amount: money(amount),
+          description: `Clinch budget hold: ${title}`.slice(0, 127),
+          amount: money(cents),
         },
       ],
       payment_source: {
         paypal: {
           experience_context: {
-            brand_name: "WantBoard",
+            brand_name: "Clinch",
             shipping_preference: "NO_SHIPPING",
             user_action: "CONTINUE",
           },
@@ -100,11 +101,11 @@ export async function authorizeOrder(orderId: string) {
 }
 
 /** Take the winning bid amount from the hold; final_capture releases the rest of the hold. */
-export async function captureAuthorization(authorizationId: string, amount: number, invoiceId: string) {
+export async function captureAuthorization(authorizationId: string, cents: number, invoiceId: string) {
   const res = await call(
     "POST",
     `/v2/payments/authorizations/${authorizationId}/capture`,
-    { amount: money(amount), final_capture: true, invoice_id: invoiceId },
+    { amount: money(cents), final_capture: true, invoice_id: invoiceId },
     `cap-${authorizationId}`,
   );
   return { captureId: res.id as string, status: res.status as string };
@@ -115,27 +116,30 @@ export function voidAuthorization(authorizationId: string) {
   return call("POST", `/v2/payments/authorizations/${authorizationId}/void`, undefined, `void-${authorizationId}`);
 }
 
-export async function refundCapture(captureId: string, note: string) {
-  const res = await call("POST", `/v2/payments/captures/${captureId}/refund`, { note_to_payer: note.slice(0, 255) }, `ref-${captureId}`);
+/** Full refund when cents is omitted, otherwise a partial refund. */
+export async function refundCapture(captureId: string, note: string, cents?: number) {
+  const body: Record<string, unknown> = { note_to_payer: note.slice(0, 255) };
+  if (cents !== undefined) body.amount = money(cents);
+  const res = await call("POST", `/v2/payments/captures/${captureId}/refund`, body, `ref-${captureId}-${cents ?? "full"}`);
   return { refundId: res.id as string, status: res.status as string };
 }
 
 /** Pay the seller (winning price minus platform fee) by email. */
-export async function payoutSeller(opts: { batchKey: string; email: string; amount: number; note: string }) {
+export async function payoutSeller(opts: { batchKey: string; email: string; cents: number; note: string }) {
   const res = await call(
     "POST",
     "/v1/payments/payouts",
     {
       sender_batch_header: {
         sender_batch_id: opts.batchKey,
-        email_subject: "You've been paid for a WantBoard deal",
+        email_subject: "You've been paid for a Clinch deal",
         email_message: opts.note.slice(0, 1000),
       },
       items: [
         {
           recipient_type: "EMAIL",
           receiver: opts.email,
-          amount: { currency: "USD", value: opts.amount.toFixed(2) },
+          amount: { currency: "USD", value: toPayPalValue(opts.cents) },
           note: opts.note.slice(0, 4000),
           sender_item_id: opts.batchKey,
         },
