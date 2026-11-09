@@ -94,7 +94,11 @@ export function createAuthorizeOrder(requestId: string, cents: number, title: st
 
 /** After buyer approval: place the hold. Returns the authorization id. */
 export async function authorizeOrder(orderId: string) {
-  const res = await call("POST", `/v2/checkout/orders/${orderId}/authorize`, {}, `auth-${orderId}`);
+  // Card payments (and some wallet flows) come back already authorized; reuse that authorization.
+  const existing = await call("GET", `/v2/checkout/orders/${orderId}`);
+  const res = existing.purchase_units?.[0]?.payments?.authorizations?.[0]
+    ? existing
+    : await call("POST", `/v2/checkout/orders/${orderId}/authorize`, {}, `auth-${orderId}`);
   const auth = res.purchase_units?.[0]?.payments?.authorizations?.[0];
   if (!auth?.id) throw new Error("PayPal returned no authorization");
   return { authorizationId: auth.id as string, status: auth.status as string, expires: auth.expiration_time as string | undefined };
