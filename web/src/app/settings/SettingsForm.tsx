@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { BadgeCheck, Check, Link2, Loader2, Unlink } from "lucide-react";
 import { CATEGORIES } from "@/lib/types";
 import { Button, Card, Field, Input, Textarea, cn } from "@/components/ui";
+import { AddressFields, readAddress, type AddressValue } from "@/components/AddressFields";
 
-type Me = { name: string; city: string; bio: string; role: "buyer" | "seller"; paypalEmail: string; categories: string[]; email: string; paypal: { email: string; verified: boolean } | null };
+type Me = { name: string; city: string; bio: string; role: "buyer" | "seller"; paypalEmail: string; categories: string[]; email: string; paypal: { email: string; verified: boolean } | null; address: AddressValue | null; addressFromPayPal: boolean };
 
 export function SettingsForm({ me, note }: { me: Me; note?: { ok: boolean; text: string } }) {
   const router = useRouter();
@@ -32,7 +33,7 @@ export function SettingsForm({ me, note }: { me: Me; note?: { ok: boolean; text:
     const res = await fetch("/api/auth/profile", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: fd.get("name"), city: fd.get("city"), bio: fd.get("bio"), paypalEmail: fd.get("paypalEmail"), role, categories: cats }),
+      body: JSON.stringify({ name: fd.get("name"), address: readAddress(fd), bio: fd.get("bio"), paypalEmail: fd.get("paypalEmail"), role, categories: cats }),
     });
     const out = await res.json().catch(() => ({}));
     setBusy(false);
@@ -46,13 +47,15 @@ export function SettingsForm({ me, note }: { me: Me; note?: { ok: boolean; text:
         <Field label="Sign-in email" hint="Used for sign-in codes and deal notifications. Never shown publicly.">
           <Input value={me.email} disabled />
         </Field>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name">
-            <Input name="name" defaultValue={me.name} required maxLength={60} />
-          </Field>
-          <Field label="City, state">
-            <Input name="city" defaultValue={me.city} required maxLength={60} />
-          </Field>
+        <Field label="Name">
+          <Input name="name" defaultValue={me.name} required maxLength={60} />
+        </Field>
+        <div className="space-y-2">
+          <div className="text-xs font-medium uppercase tracking-wider text-muted">{role === "seller" ? "Ships from" : "Default delivery address"}</div>
+          <p className="text-xs text-dim">
+            {me.addressFromPayPal ? "From your PayPal account. " : ""}Private. Your profile shows only city and state.
+          </p>
+          <AddressFields value={me.address ?? undefined} street={role === "buyer"} required={true} />
         </div>
         <Field label="About you">
           <Textarea name="bio" rows={3} defaultValue={me.bio} maxLength={300} />

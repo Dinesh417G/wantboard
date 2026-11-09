@@ -18,6 +18,12 @@ const hash = (t: unknown) => crypto.createHash("sha256").update(canonical(t)).di
 
 export const DEMO_BUYER_ID = "p_maya";
 
+/** Fictional default delivery addresses for the demo buyers (so the demo posts in one click). */
+export const DEMO_ADDRESSES: Record<string, NonNullable<Party["address"]>> = {
+  p_maya: { line1: "100 Demo Lane", line2: "Unit 4", city: "Austin", state: "TX", zip: "78701", country: "US", source: "manual" },
+  p_jordan: { line1: "250 Sample Ave", city: "Denver", state: "CO", zip: "80202", country: "US", source: "manual" },
+};
+
 const parties: Party[] = [
   { id: "p_maya", name: "Maya Chen", handle: "maya", city: "Austin, TX", role: "buyer", paypalEmail: BUYER_EMAIL, categories: [], bio: "Restores mid-century hi-fi and builds custom guitar amps.", joinedAt: iso(-200), demo: true },
   { id: "p_jordan", name: "Jordan Ellis", handle: "jordan", city: "Denver, CO", role: "buyer", paypalEmail: "", categories: [], bio: "Fleet manager for a small machine shop.", joinedAt: iso(-160), demo: true },

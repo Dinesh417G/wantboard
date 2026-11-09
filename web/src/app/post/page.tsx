@@ -15,7 +15,7 @@ export default async function PostPage() {
       <h1 className="mt-1 text-4xl font-semibold tracking-tight">What do you need?</h1>
       <p className="mt-2 text-muted">Sellers in the category see it once PayPal is holding your max price. You only pay the price you accept.</p>
       {me.role === "buyer" ? (
-        <PostForm buyerName={me.name} />
+        <PostForm buyerName={me.name} address={me.address ?? null} addressFromPayPal={me.address?.source === "paypal"} />
       ) : (
         <Card className="mt-8 p-6 text-sm text-muted">
           You&apos;re signed in as <span className="text-fg">{me.name}</span>, a seller. Switch your account to buyer in Settings (or pick a demo buyer) to post a request.

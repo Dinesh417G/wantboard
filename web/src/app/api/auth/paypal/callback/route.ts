@@ -40,6 +40,7 @@ export async function GET(req: Request) {
       if (db.parties.some((p) => p.id !== me.id && p.paypal?.payerId === who.payerId)) return "taken";
       me.paypal = link;
       if (!me.paypalEmail && who.email) me.paypalEmail = who.email;
+      if (!me.address && who.address) me.address = { ...who.address, source: "paypal" };
       return "ok";
     });
     if (out === "ok") adminAlert(`PayPal linked`, { "PayPal email": who.email, Verified: who.verified ? "yes" : "no", Time: `${nowIso().slice(0, 16).replace("T", " ")} UTC` });
@@ -53,6 +54,7 @@ export async function GET(req: Request) {
     if (!p) return null;
     p.paypal = { ...link, linkedAt: p.paypal?.linkedAt ?? link.linkedAt };
     if (!p.paypalEmail && who.email) p.paypalEmail = who.email;
+    if (!p.address && who.address) p.address = { ...who.address, source: "paypal" };
     return { id: p.id, name: p.name, role: p.role };
   });
   if (found) {
@@ -65,6 +67,6 @@ export async function GET(req: Request) {
   // New person: carry the PayPal identity into onboarding (signed, 30 minutes).
   if (!who.email) return go("/login?error=paypal_no_email");
   const res = go(`/login?step=profile&next=${encodeURIComponent(state.next)}`);
-  res.cookies.set({ name: SIGNUP_COOKIE, value: makeToken({ email: who.email, name: who.name, paypal: link }, 1800), ...cookieOpts(1800) });
+  res.cookies.set({ name: SIGNUP_COOKIE, value: makeToken({ email: who.email, name: who.name, paypal: link, address: who.address }, 1800), ...cookieOpts(1800) });
   return res;
 }

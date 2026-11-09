@@ -7,7 +7,7 @@ import { DemoPanel } from "./DemoPanel";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { readToken, SIGNUP_COOKIE } from "@/lib/auth";
-import type { PayPalLink } from "@/lib/types";
+import type { Address, PayPalLink } from "@/lib/types";
 
 const ERRORS: Record<string, string> = {
   paypal_cancelled: "PayPal sign-in was cancelled. Try again, or use your email instead.",
@@ -26,8 +26,8 @@ export default async function Login({ searchParams }: { searchParams: Promise<{ 
   const db = await read();
   const me = viewerIn(db, await viewerId());
   if (me.id !== GUEST_ID && step !== "profile") redirect(safeNext);
-  const signup = step === "profile" ? readToken<{ email: string; name?: string; paypal?: PayPalLink }>((await cookies()).get(SIGNUP_COOKIE)?.value) : null;
-  const initial = signup ? { email: signup.email, name: signup.name ?? "", viaPayPal: !!signup.paypal, verified: !!signup.paypal?.verified } : undefined;
+  const signup = step === "profile" ? readToken<{ email: string; name?: string; paypal?: PayPalLink; address?: Address }>((await cookies()).get(SIGNUP_COOKIE)?.value) : null;
+  const initial = signup ? { email: signup.email, name: signup.name ?? "", viaPayPal: !!signup.paypal, verified: !!signup.paypal?.verified, address: signup.address } : undefined;
   const demos = db.parties.filter((p) => p.demo).map((p) => ({ id: p.id, name: p.name, role: p.role, city: p.city }));
   return (
     <div className="relative overflow-hidden">

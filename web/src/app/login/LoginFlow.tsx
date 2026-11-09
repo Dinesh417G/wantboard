@@ -6,10 +6,11 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, BadgeCheck, Loader2, Mail, ShoppingBag, Store } from "lucide-react";
 import { CATEGORIES } from "@/lib/types";
 import { Button, Card, Field, Input, Textarea, cn } from "@/components/ui";
+import { AddressFields, readAddress, type AddressValue } from "@/components/AddressFields";
 
 type Step = "email" | "code" | "profile";
 
-type Initial = { email: string; name: string; viaPayPal: boolean; verified: boolean };
+type Initial = { email: string; name: string; viaPayPal: boolean; verified: boolean; address?: AddressValue };
 
 /** PayPal's mark, simplified, for the "Continue with PayPal" button. */
 function PayPalMark() {
@@ -70,7 +71,7 @@ export function LoginFlow({ next, initial, initialError = "" }: { next: string; 
     const fd = new FormData(e.currentTarget);
     const out = await call("/api/auth/profile", {
       name: fd.get("name"),
-      city: fd.get("city"),
+      address: readAddress(fd),
       bio: fd.get("bio"),
       paypalEmail: fd.get("paypalEmail"),
       role,
@@ -171,14 +172,19 @@ export function LoginFlow({ next, initial, initialError = "" }: { next: string; 
                   </button>
                 ))}
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label={role === "seller" ? "Shop name" : "Your name"}>
-                  <Input name="name" required maxLength={60} defaultValue={initial?.name} />
-                </Field>
-                <Field label="City, state">
-                  <Input name="city" required maxLength={60} placeholder="Austin, TX" />
-                </Field>
-              </div>
+              <Field label={role === "seller" ? "Shop name" : "Your name"}>
+                <Input name="name" required maxLength={60} defaultValue={initial?.name} />
+              </Field>
+              <fieldset className="space-y-2">
+                <legend className="text-xs font-medium uppercase tracking-wider text-muted">{role === "seller" ? "Ships from" : "Delivery address"}</legend>
+                <p className="text-xs text-dim">
+                  {initial?.address ? "From your PayPal account. " : ""}
+                  {role === "seller"
+                    ? "Buyers can limit offers to sellers in their state or city. Only city and state are public."
+                    : "Where sellers ship to. Only city, state and ZIP prefix are shown until you accept an offer."}
+                </p>
+                <AddressFields value={initial?.address} street={role === "buyer"} required={true} />
+              </fieldset>
               {initial?.viaPayPal ? (
                 <p className="text-sm text-muted">Payouts go to the PayPal account you just connected. You can change this later in Settings.</p>
               ) : (

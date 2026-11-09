@@ -150,6 +150,15 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
               PayPal captured {usd(v.paypal.capturedCents ?? 0)}
             </Badge>
           </div>
+          {(isSeller || role === "buyer") && v.shipTo?.full && (
+            <div className="mt-4 rounded-xl border border-line bg-white/[0.03] p-3 text-sm">
+              <div className="text-[11px] uppercase tracking-wider text-dim">Ship to (also on the PayPal order)</div>
+              <div className="mt-1">{v.shipTo.name}</div>
+              <div className="text-muted">
+                {[v.shipTo.line1, v.shipTo.line2].filter(Boolean).join(", ")}, {v.shipTo.city}, {v.shipTo.state} {v.shipTo.zip}
+              </div>
+            </div>
+          )}
           {isSeller ? (
             <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
               <Field label="Tracking">

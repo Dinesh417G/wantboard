@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import type { Db, WantRequest } from "./types";
-import { seedDb } from "./seed";
+import { DEMO_ADDRESSES, seedDb } from "./seed";
 
 const DOC_ID = "clinch";
 const SB_URL = process.env.SUPABASE_URL;
@@ -63,7 +63,10 @@ const DEMO_IDS = new Set(["p_maya", "p_jordan", "p_atlas", "p_relic", "p_volt", 
 
 /** Bring older stored documents up to the current shape (idempotent, in memory). */
 function upgrade(db: Db): Db {
-  for (const p of db.parties) if (DEMO_IDS.has(p.id) && !p.email) p.demo = true;
+  for (const p of db.parties) {
+    if (DEMO_IDS.has(p.id) && !p.email) p.demo = true;
+    if (p.demo && !p.address && DEMO_ADDRESSES[p.id]) p.address = { ...DEMO_ADDRESSES[p.id] };
+  }
   return db;
 }
 

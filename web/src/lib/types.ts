@@ -31,7 +31,13 @@ export type Party = {
   demo?: boolean;
   /** Linked via Log in with PayPal: payouts go to this PayPal account by payer ID. */
   paypal?: PayPalLink;
+  /** Default delivery address (buyers) / ships-from address (sellers). Private: never shown publicly. */
+  address?: Address & { source: "paypal" | "manual" };
 };
+
+export type Address = { line1: string; line2?: string; city: string; state: string; zip: string; country: "US" };
+/** Which sellers may make offers, relative to the delivery address. */
+export type Reach = "us" | "state" | "city";
 
 export type PayPalLink = { payerId: string; email: string; verified: boolean; linkedAt: string };
 
@@ -112,6 +118,9 @@ export type WantRequest = {
   budgetCents: number;
   preferences: string[];
   images?: string[];
+  /** Delivery address. Full street only for the buyer, and the winning seller after agreement. */
+  shipTo?: Address & { name: string };
+  reach?: Reach;
   /** Sellers the AI matchmaker invited, best first. */
   matches?: Match[];
   buyerId: string;

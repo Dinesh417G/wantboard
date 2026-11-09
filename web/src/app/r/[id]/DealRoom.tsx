@@ -30,7 +30,7 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
   }, [v.status, v.delivery, act]);
 
   const latest = thread?.offers.at(-1);
-  const sellerCanOffer = me === "seller" && canSell && v.status === "open" && (!latest || latest.status !== "open" || latest.by === "buyer");
+  const sellerCanOffer = me === "seller" && canSell && v.canOffer && v.status === "open" && (!latest || latest.status !== "open" || latest.by === "buyer");
   const showForm = (countering || (sellerCanOffer && !thread)) && v.status === "open";
 
   function startCounter(o: Offer) {
@@ -68,9 +68,19 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
             <span className="inline-flex items-center gap-1.5">
               <CalendarClock className="size-4" /> needed by {v.neededBy}
             </span>
-            <Link href={`/u/${v.buyer.handle}`} className="inline-flex items-center gap-1.5 hover:text-fg">
-              <MapPin className="size-4" /> {v.buyer.name}, {v.buyer.city}
+            <Link href={`/u/${v.buyer.handle}`} className="hover:text-fg">
+              {v.buyer.name}
             </Link>
+            {v.shipTo ? (
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="size-4" /> deliver to {v.shipTo.city}, {v.shipTo.state} {v.shipTo.zip}
+                <Badge tone={v.reach && v.reach !== "us" ? "amber" : "neutral"}>{v.reachText}</Badge>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                <MapPin className="size-4" /> {v.buyer.city}
+              </span>
+            )}
           </div>
         </div>
         <Card className="edge flex items-center gap-4 p-4">
@@ -155,6 +165,7 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
                   </Badge>
                 )}
                 {me === "seller" && !canSell && <Badge tone="amber">not in your categories</Badge>}
+                {me === "seller" && canSell && !v.canOffer && <Badge tone="amber">outside the buyer&apos;s area: {v.reachText}</Badge>}
               </div>
 
               {me === "buyer" && v.threads.length > 1 && (

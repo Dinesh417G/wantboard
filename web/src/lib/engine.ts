@@ -1,6 +1,7 @@
 // Deal state machine. Every transition checks the caller's role and the current state,
 // calls PayPal (or simulates it for sample deals, and says so), and appends to the money trail.
 import "server-only";
+import { canServe, reachShort } from "./domain/location";
 import { authorizeOrder, captureAuthorization, createAuthorizeOrder, payoutSeller, refundCapture, voidAuthorization } from "./paypal";
 import { Conflict, Forbidden, NotFound, getRequest, id, log, mutate, nowIso, read, sha256 } from "./store";
 import { canonical, diffTerms, summarizeDiff, validateTerms, type Terms } from "./domain/offers";
@@ -81,7 +82,7 @@ export async function createHold(requestId: string, meId: string) {
   const c = await load(requestId, meId);
   mustBuyer(c);
   if (c.r.status !== "draft") throw new Conflict("budget already secured");
-  const order = await createAuthorizeOrder(c.r.id, c.r.budgetCents, c.r.title);
+  const order = await createAuthorizeOrder(c.r.id, c.r.budgetCents, c.r.title, c.r.shipTo);
   commit(requestId, (r) => void (r.paypal.orderId = order.id));
   return { orderId: order.id };
 }
@@ -91,13 +92,13 @@ export async function confirmHold(requestId: string, meId: string) {
   mustBuyer(c);
   if (c.r.status !== "draft" || !c.r.paypal.orderId) throw new Conflict("nothing to authorize");
   const auth = await authorizeOrder(c.r.paypal.orderId);
-  const matched = await matchSellers(c.r, c.db.parties.filter((p) => p.role === "seller"));
+  const matched = await matchSellers(c.r, c.db.parties.filter((p) => p.role === "seller" && canServe(p, c.r)));
   return commit(requestId, (r, db) => {
     r.paypal.authorizationId = auth.authorizationId;
     r.paypal.authorizationExpires = auth.expires;
     r.status = "open";
     r.matches = matched;
-    log(r, `PayPal is holding ${usd(r.budgetCents)} (authorization ${auth.authorizationId}). Sellers can now make offers.`, "money");
+    log(r, `PayPal is holding ${usd(r.budgetCents)} (authorization ${auth.authorizationId})${r.shipTo ? `, ship-to ${r.shipTo.city}, ${r.shipTo.state} on the PayPal order` : ""}. Offers open (${reachShort(r)}).`, "money");
     if (matched.length) {
       const names = matched.map((m) => `${db.parties.find((p) => p.id === m.sellerId)?.name} (${m.score})`).join(", ");
       log(r, `Copilot matched ${matched.length} seller${matched.length === 1 ? "" : "s"} and invited them: ${names}${matched[0].source === "heuristic" ? " [offline heuristic]" : ""}.`);
@@ -133,6 +134,7 @@ export async function makeOffer(requestId: string, meId: string, b: Record<strin
       const me = db.parties.find((p) => p.id === meId)!;
       if (me.role !== "seller") throw new Forbidden("only sellers can make offers on a request");
       if (!me.categories.includes(r.category) && !r.matches?.some((m) => m.sellerId === me.id)) throw new Forbidden("you don't sell in this category");
+      if (!canServe(me, r)) throw new Forbidden(`this buyer only takes offers from ${reachShort(r).replace(" only", "")}`);
       thread = r.threads.find((x) => x.sellerId === meId) ?? (() => {
         const nt: Thread = { id: id("t"), sellerId: meId, offers: [], messages: [] };
         r.threads.push(nt);

@@ -1,6 +1,8 @@
 // Server-side PayPal REST client (sandbox only). Never import this from a client component.
 import "server-only";
 import { toPayPalValue } from "./domain/money";
+import { parseAddress } from "./domain/location";
+import type { Address } from "./types";
 
 const BASE = "https://api-m.sandbox.paypal.com";
 
@@ -64,7 +66,7 @@ async function call<T = any>(method: string, path: string, body?: unknown, idemp
 const money = (cents: number) => ({ currency_code: "USD", value: toPayPalValue(cents) });
 
 /** Order with intent AUTHORIZE: the buyer's budget is held, not taken. */
-export function createAuthorizeOrder(requestId: string, cents: number, title: string) {
+export function createAuthorizeOrder(requestId: string, cents: number, title: string, shipTo?: Address & { name: string }) {
   return call<{ id: string; status: string }>(
     "POST",
     "/v2/checkout/orders",
@@ -76,13 +78,30 @@ export function createAuthorizeOrder(requestId: string, cents: number, title: st
           custom_id: requestId,
           description: `Clinch budget hold: ${title}`.slice(0, 127),
           amount: money(cents),
+          // Ship-to on the PayPal order: the buyer sees it in PayPal, and it backs seller protection.
+          ...(shipTo
+            ? {
+                shipping: {
+                  type: "SHIPPING",
+                  name: { full_name: shipTo.name.slice(0, 300) },
+                  address: {
+                    address_line_1: shipTo.line1,
+                    ...(shipTo.line2 ? { address_line_2: shipTo.line2 } : {}),
+                    admin_area_2: shipTo.city,
+                    admin_area_1: shipTo.state,
+                    postal_code: shipTo.zip,
+                    country_code: "US",
+                  },
+                },
+              }
+            : {}),
         },
       ],
       payment_source: {
         paypal: {
           experience_context: {
             brand_name: "Clinch",
-            shipping_preference: "NO_SHIPPING",
+            shipping_preference: shipTo ? "SET_PROVIDED_ADDRESS" : "NO_SHIPPING",
             user_action: "CONTINUE",
           },
         },
@@ -177,7 +196,7 @@ export async function verifyWebhook(headers: Headers, rawEvent: string, webhookI
 
 // ---------- Log in with PayPal (OpenID Connect) ----------
 
-const LOGIN_SCOPES = "openid profile email https://uri.paypal.com/services/paypalattributes";
+const LOGIN_SCOPES = "openid profile email address https://uri.paypal.com/services/paypalattributes";
 
 /** Where the browser goes to sign in with PayPal (sandbox). */
 export function paypalLoginUrl(state: string, redirectUri: string) {
@@ -192,7 +211,7 @@ export function paypalLoginUrl(state: string, redirectUri: string) {
   return `https://www.sandbox.paypal.com/signin/authorize?${q}`;
 }
 
-export type PayPalIdentity = { payerId: string; email: string; emailConfirmed: boolean; name: string; verified: boolean };
+export type PayPalIdentity = { payerId: string; email: string; emailConfirmed: boolean; name: string; verified: boolean; address?: Address };
 
 /** Exchange the authorization code for a user token, then read the PayPal account's identity. */
 export async function paypalIdentity(code: string): Promise<PayPalIdentity> {
@@ -218,5 +237,15 @@ export async function paypalIdentity(code: string): Promise<PayPalIdentity> {
     emailConfirmed: main?.confirmed !== false,
     name: String(u.name ?? [u.given_name, u.family_name].filter(Boolean).join(" ")).trim(),
     verified: u.verified_account === true || u.verified_account === "true",
+    address: fromPayPalAddress(u.address),
   };
+}
+
+/** userinfo address -> our Address (US only; undefined if missing or not valid). */
+function fromPayPalAddress(a: unknown): Address | undefined {
+  const x = (a ?? {}) as Record<string, string>;
+  if (!x.street_address || (x.country && x.country !== "US")) return undefined;
+  const [line1, ...rest] = String(x.street_address).split(/\n|, /);
+  const out = parseAddress({ line1, line2: rest.join(", "), city: x.locality, state: x.region, zip: x.postal_code }, { needStreet: true });
+  return typeof out === "string" ? undefined : out;
 }

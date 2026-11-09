@@ -19,6 +19,8 @@ export type BoardItem = {
   offers: number;
   buyer: string;
   city: string;
+  /** Non-empty when the buyer limits offers by location, e.g. "TX sellers only". */
+  reach: string;
   createdAt: string;
   sample: boolean;
   image?: string;
@@ -115,6 +117,7 @@ export function BoardGrid({ items, sellerView }: { items: BoardItem[]; sellerVie
                     </span>
                     <span className="inline-flex items-center gap-1">
                       <MapPin className="size-3.5" /> {i.city}
+                      {i.reach && <span className="text-amber-200"> · {i.reach}</span>}
                     </span>
                     {i.mine && <Badge tone="brand">yours</Badge>}
                     {i.matched && <Badge tone="brand">AI match</Badge>}

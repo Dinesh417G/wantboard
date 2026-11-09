@@ -1,10 +1,16 @@
 // What a given viewer is allowed to see. Private limits and other sellers' negotiations are removed here,
 // and the AI copilot is built only from this filtered view, so it can never leak the other side's data.
-import type { Db, Match, Party, Thread, WantRequest } from "./types";
+import type { Address, Db, Match, Party, Thread, WantRequest } from "./types";
+import { canServe, publicArea, reachShort } from "./domain/location";
 
 export type PartyLite = Pick<Party, "id" | "name" | "handle" | "city" | "role" | "bio" | "categories" | "joinedAt"> & { payoutVerified: boolean; paypalConnected: boolean; paypalVerified: boolean };
 
-export type RequestView = Omit<WantRequest, "threads" | "buyerTargetCents" | "matches"> & {
+export type RequestView = Omit<WantRequest, "threads" | "buyerTargetCents" | "matches" | "shipTo"> & {
+  /** Full address for the buyer and (after agreement) the winning seller; city, state and ZIP prefix for everyone else. */
+  shipTo?: { city: string; state: string; zip: string } & Partial<Omit<Address, "city" | "state" | "zip">> & { name?: string; full: boolean };
+  reachText: string;
+  /** Viewer is a seller whose location the buyer accepts. */
+  canOffer: boolean;
   matches?: (Match & { sellerName: string })[];
   /** Set when the viewer is a seller. */
   mySellerId?: string;
@@ -36,13 +42,17 @@ export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView 
   const visible = role === "buyer" ? r.threads : r.threads.filter((t) => t.sellerId === viewer.id);
   const mine = role === "seller" ? r.threads.find((t) => t.sellerId === viewer.id) : undefined;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { buyerTargetCents, threads, matches, ...rest } = r;
+  const { buyerTargetCents, threads, matches, shipTo, ...rest } = r;
   // Double-blind reviews: until both sides submit, a viewer sees only their own.
   const isWinningSeller = role === "seller" && !!r.agreement && r.threads.find((t) => t.id === r.agreement!.threadId)?.sellerId === viewer.id;
   const myReviewRole = role === "buyer" ? "buyer" : isWinningSeller ? "seller" : null;
   const reviews = r.reviews.length === 2 ? r.reviews : r.reviews.filter((x) => x.by === myReviewRole);
+  const seesAddress = role === "buyer" || isWinningSeller;
   return {
     ...rest,
+    shipTo: shipTo ? (seesAddress ? { ...shipTo, full: true } : { ...publicArea(shipTo), full: false }) : undefined,
+    reachText: reachShort(r),
+    canOffer: viewer.role === "seller" && canServe(viewer, r),
     reviews,
     matches: matches
       ?.filter((m) => role === "buyer" || m.sellerId === viewer.id)

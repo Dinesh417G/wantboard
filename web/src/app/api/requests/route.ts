@@ -4,7 +4,8 @@ import { code, Forbidden, id, log, mutate, nowIso } from "@/lib/store";
 import { BadInput } from "@/lib/engine";
 import { parseDollars } from "@/lib/domain/money";
 import { cleanImages } from "@/lib/domain/images";
-import { CATEGORIES, type Category, type WantRequest } from "@/lib/types";
+import { CATEGORIES, type Category, type Reach, type WantRequest } from "@/lib/types";
+import { parseAddress } from "@/lib/domain/location";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
@@ -23,6 +24,11 @@ export const POST = handle(async (req: Request) => {
   if (budgetCents === null || budgetCents < 100 || budgetCents > 1_000_000) throw new BadInput("Max price must be between $1 and $10,000");
   const target = b.target ? parseDollars(b.target) : undefined;
   if (target === null || (target !== undefined && target > budgetCents)) throw new BadInput("Private target must be at or below the max price");
+  const ship = parseAddress(b.shipTo, { needStreet: true });
+  if (typeof ship === "string") throw new BadInput(`Delivery address: ${ship}`);
+  const shipName = s((b.shipTo as Record<string, unknown> | undefined)?.name, 80);
+  if (shipName.length < 2) throw new BadInput("Enter the recipient name");
+  const reach: Reach = b.reach === "state" || b.reach === "city" ? b.reach : "us";
   const preferences = s(b.preferences, 1000).split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 6);
 
   return mutate((db) => {
@@ -38,6 +44,8 @@ export const POST = handle(async (req: Request) => {
       budgetCents,
       preferences,
       images: cleanImages(b.images, 6),
+      shipTo: { ...ship, name: shipName },
+      reach,
       buyerId: buyer.id,
       status: "draft",
       createdAt: nowIso(),
@@ -47,6 +55,10 @@ export const POST = handle(async (req: Request) => {
       events: [],
       paypal: { refunds: [] },
     };
+    if (b.saveAddress === true || !buyer.address) {
+      buyer.address = { ...ship, source: buyer.address?.line1 === ship.line1 && buyer.address.zip === ship.zip ? buyer.address.source : "manual" };
+      buyer.city = `${ship.city}, ${ship.state}`;
+    }
     log(r, `${buyer.name} posted this request. Next: PayPal holds the max price so sellers know it's real.`);
     db.requests.push(r);
     return { id: r.id };

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { read } from "@/lib/store";
 import { viewerId, viewerIn } from "@/lib/viewer";
+import { canServe, reachShort } from "@/lib/domain/location";
 import { BoardGrid, type BoardItem } from "./BoardGrid";
 import { ButtonLink } from "@/components/ui";
 import { Plus } from "lucide-react";
@@ -24,13 +25,14 @@ export default async function Board() {
       status: r.status,
       offers: r.threads.filter((t) => t.offers.length).length,
       buyer: db.parties.find((p) => p.id === r.buyerId)!.name,
-      city: db.parties.find((p) => p.id === r.buyerId)!.city,
+      city: r.shipTo ? `${r.shipTo.city}, ${r.shipTo.state}` : db.parties.find((p) => p.id === r.buyerId)!.city,
+      reach: r.reach && r.reach !== "us" ? reachShort(r) : "",
       createdAt: r.createdAt,
       sample: Boolean(r.sample),
       image: r.images?.[0],
       matched: r.matches?.some((m) => m.sellerId === me.id) ?? false,
       mine: r.buyerId === me.id,
-      forMe: me.role === "seller" && me.categories.includes(r.category),
+      forMe: me.role === "seller" && me.categories.includes(r.category) && canServe(me, r),
     }));
 
   return (

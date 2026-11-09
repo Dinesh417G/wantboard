@@ -2,13 +2,16 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { EyeOff, Loader2, Lock, Sparkles, Wand2 } from "lucide-react";
+import { EyeOff, Loader2, Lock, MapPin, Sparkles, Wand2 } from "lucide-react";
 import { CATEGORIES } from "@/lib/types";
 import { parseDollars, usd } from "@/lib/domain/money";
 import { Button, Card, Field, Input, Select, Textarea } from "@/components/ui";
 import { PhotoPicker } from "@/components/PhotoPicker";
+import { AddressFields, readAddress, type AddressValue } from "@/components/AddressFields";
+import { REACH_LABEL } from "@/lib/domain/location";
+import type { Reach } from "@/lib/types";
 
-export function PostForm({ buyerName }: { buyerName: string }) {
+export function PostForm({ buyerName, address, addressFromPayPal }: { buyerName: string; address: AddressValue | null; addressFromPayPal: boolean }) {
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -19,6 +22,7 @@ export function PostForm({ buyerName }: { buyerName: string }) {
   const [aiBusy, setAiBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [reach, setReach] = useState<Reach>("us");
   const minDate = new Date().toISOString().slice(0, 10);
   const budgetCents = parseDollars(budget);
 
@@ -38,8 +42,14 @@ export function PostForm({ buyerName }: { buyerName: string }) {
     e.preventDefault();
     setBusy(true);
     setError("");
-    const form = Object.fromEntries(new FormData(e.currentTarget));
-    const res = await fetch("/api/requests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, images }) });
+    const fd = new FormData(e.currentTarget);
+    const form = Object.fromEntries(fd);
+    const shipTo = { ...readAddress(fd), name: String(fd.get("shipName") ?? "") };
+    const res = await fetch("/api/requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...form, images, shipTo, reach, saveAddress: fd.get("saveAddress") === "on" }),
+    });
     const out = await res.json();
     if (!res.ok) {
       setBusy(false);
@@ -79,8 +89,45 @@ export function PostForm({ buyerName }: { buyerName: string }) {
         )}
         <PhotoPicker value={images} onChange={setImages} max={6} label="Photos or reference images (up to 6)" />
         <Field label="Your preferences" hint="One per line. Sellers see these, and the copilot checks offers against them.">
-          <Textarea name="preferences" rows={3} placeholder={"New only, no refurbished\nShips to Austin, TX\nOriginal box"} />
+          <Textarea name="preferences" rows={3} placeholder={"New only, no refurbished\nOriginal box"} />
         </Field>
+      </Card>
+
+      <Card className="space-y-5 p-6">
+        <div className="flex items-center gap-2">
+          <MapPin className="size-4 text-sky-300" />
+          <div className="font-medium">Deliver to</div>
+          {addressFromPayPal && <span className="rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[11px] text-sky-200">from your PayPal account</span>}
+        </div>
+        <Field label="Recipient name">
+          <Input name="shipName" required maxLength={80} defaultValue={buyerName} autoComplete="name" />
+        </Field>
+        <AddressFields value={address ?? undefined} required />
+        <label className="flex items-center gap-2 text-sm text-muted">
+          <input type="checkbox" name="saveAddress" defaultChecked={!address} className="accent-[#7c5cff]" /> Save as my default delivery address
+        </label>
+        <fieldset>
+          <legend className="text-xs font-medium uppercase tracking-wider text-muted">Who can make offers</legend>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            {(Object.keys(REACH_LABEL) as Reach[]).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setReach(k)}
+                className={
+                  reach === k
+                    ? "rounded-xl border border-brand/60 bg-brand/[0.1] p-3 text-left text-sm"
+                    : "rounded-xl border border-line p-3 text-left text-sm text-muted hover:bg-white/[0.04]"
+                }
+              >
+                {REACH_LABEL[k]}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-dim">
+            Sellers see only the city, state and ZIP prefix. The full address goes to PayPal with your hold, and to the seller you pick after you accept.
+          </p>
+        </fieldset>
       </Card>
 
       <Card className="grid gap-5 p-6 sm:grid-cols-3">
