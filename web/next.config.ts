@@ -10,6 +10,8 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // scripts/dev-isolated.mjs builds into .next-isolated so it can run next to the normal dev server.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   // PayPal Agent Toolkit pulls in large SDKs; load it from node_modules at runtime instead of bundling it.
   serverExternalPackages: ["@paypal/agent-toolkit"],
   async headers() {

@@ -27,7 +27,7 @@ async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
 }
 
 // ---------- local file fallback ----------
-const FILE = path.join(process.cwd(), "data", "clinch.json");
+const FILE = process.env.CLINCH_DATA_FILE || path.join(process.cwd(), "data", "clinch.json");
 function fileLoad(): Loaded | null {
   try {
     return JSON.parse(fs.readFileSync(FILE, "utf8")) as Loaded;
