@@ -25,6 +25,10 @@ export type Party = {
   categories: Category[];
   bio: string;
   joinedAt: string;
+  /** Sign-in email (real accounts). Never shown publicly. */
+  email?: string;
+  /** Seeded demo account: anyone can sign in as it from the demo menu. */
+  demo?: boolean;
 };
 
 export type OfferStatus = "open" | "countered" | "accepted" | "rejected" | "superseded" | "withdrawn" | "expired";
@@ -134,4 +138,6 @@ export type WantRequest = {
 
 export type Match = { sellerId: string; score: number; reason: string; source: "ai" | "heuristic" };
 
-export type Db = { parties: Party[]; requests: WantRequest[] };
+export type OtpChallenge = { email: string; hash: string; expiresAt: string; attempts: number; createdAt: string };
+
+export type Db = { parties: Party[]; requests: WantRequest[]; otps?: OtpChallenge[] };

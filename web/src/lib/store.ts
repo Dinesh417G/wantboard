@@ -59,9 +59,17 @@ async function saveRaw(db: Db, expected: number): Promise<number | null> {
   return v === null ? null : Number(v);
 }
 
+const DEMO_IDS = new Set(["p_maya", "p_jordan", "p_atlas", "p_relic", "p_volt", "p_circuit"]);
+
+/** Bring older stored documents up to the current shape (idempotent, in memory). */
+function upgrade(db: Db): Db {
+  for (const p of db.parties) if (DEMO_IDS.has(p.id) && !p.email) p.demo = true;
+  return db;
+}
+
 async function load(): Promise<Loaded> {
   const l = await loadRaw();
-  if (l) return l;
+  if (l) return { ...l, db: upgrade(l.db) };
   const db = seedDb();
   await saveRaw(db, 0);
   return (await loadRaw()) ?? { db, version: 1 };

@@ -8,6 +8,7 @@ import { feeBreakdown, usd, parseDollars } from "./domain/money";
 import { scanMessage } from "./domain/scam-shield";
 import { cleanImages } from "./domain/images";
 import { matchSellers } from "./ai";
+import { notify } from "./email";
 import { DISPUTE_RESPONSE_HOURS, MAX_ROUNDS, OFFER_TTL_HOURS } from "./config/site";
 import type { Db, Dispute, Offer, Party, Thread, WantRequest } from "./types";
 
@@ -22,7 +23,7 @@ async function load(requestId: string, meId: string): Promise<Ctx> {
   const db = await read();
   const r = getRequest(db, requestId);
   const me = db.parties.find((p) => p.id === meId);
-  if (!me) throw new Forbidden("unknown user");
+  if (!me) throw new Forbidden("Sign in to do this");
   return { db, r, me };
 }
 
@@ -67,6 +68,13 @@ function parseTerms(b: Record<string, unknown>): Terms {
   };
 }
 
+/** Email a party about a deal event (real accounts only; best effort). */
+async function mail(requestId: string, partyId: string | undefined, subject: string, text: string) {
+  if (!partyId) return;
+  const db = await read();
+  notify(db.parties.find((p) => p.id === partyId)?.email, subject, text, requestId);
+}
+
 // ---------- PayPal hold ----------
 
 export async function createHold(requestId: string, meId: string) {
@@ -95,6 +103,9 @@ export async function confirmHold(requestId: string, meId: string) {
       log(r, `Copilot matched ${matched.length} seller${matched.length === 1 ? "" : "s"} and invited them: ${names}${matched[0].source === "heuristic" ? " [offline heuristic]" : ""}.`);
     }
     return { status: r.status };
+  }).then(async (out) => {
+    for (const m of matched) await mail(requestId, m.sellerId, `New match: ${c.r.title}`, `A buyer needs "${c.r.title}" and PayPal is holding ${usd(c.r.budgetCents)} for it. Copilot matched you (${m.score}/100): ${m.reason} Send an offer in the deal room.`);
+    return out;
   });
 }
 
@@ -150,7 +161,10 @@ export async function makeOffer(requestId: string, meId: string, b: Record<strin
     const seller = db.parties.find((p) => p.id === thread.sellerId)!;
     const summary = prev ? summarizeDiff(diffTerms(prev.terms, t)) : `${usd(t.priceCents)}, delivery ${t.deliveryDate}`;
     log(r, `${by === "buyer" ? "Buyer" : seller.name} ${prev ? "countered" : "offered"} v${offer.version}: ${summary}${isFinal ? " (best and final)" : ""}`);
-    return offer;
+    return { offer, to: by === "buyer" ? thread.sellerId : r.buyerId, who: by === "buyer" ? "The buyer" : seller.name, summary, title: r.title };
+  }).then(async (x) => {
+    await mail(requestId, x.to, `New offer on "${x.title}"`, `${x.who} sent offer v${x.offer.version}: ${x.summary}. Accept, counter or decline in the deal room.`);
+    return x.offer;
   });
 }
 
@@ -217,7 +231,11 @@ export async function acceptOffer(requestId: string, meId: string, b: Record<str
         (released > 0 ? `; ${usd(released)} of the hold released to the buyer.` : "."),
       "money",
     );
-    return { status: r.status };
+    return { status: r.status, seller: thread.sellerId, buyer: r.buyerId, title: r.title, price: offer.terms.priceCents };
+  }).then(async (x) => {
+    await mail(requestId, x.seller, `Deal agreed: ${x.title}`, `Your offer of ${usd(x.price)} was accepted and PayPal has captured the payment. Ship the item and mark it shipped in the deal room.`);
+    await mail(requestId, x.buyer, `Agreement signed: ${x.title}`, `PayPal captured ${usd(x.price)}. The seller is paid only after you receive and inspect the item.`);
+    return { status: x.status };
   });
 }
 
@@ -262,7 +280,10 @@ export function ship(requestId: string, meId: string, b: Record<string, unknown>
     r.delivery = { note: String(b.note ?? "").slice(0, 500), tracking: String(b.tracking ?? "").slice(0, 80), at: nowIso(), inspectionEndsAt: ends };
     r.status = "shipped";
     log(r, `Seller submitted delivery${r.delivery.tracking ? ` (tracking ${r.delivery.tracking})` : ""}. Buyer has ${days} day${days === 1 ? "" : "s"} to inspect; payment releases automatically after that.`);
-    return { status: r.status };
+    return { status: r.status, buyer: r.buyerId, title: r.title, days, tracking: r.delivery.tracking };
+  }).then(async (x) => {
+    await mail(requestId, x.buyer, `Shipped: ${x.title}`, `The seller marked your item shipped${x.tracking ? ` (tracking ${x.tracking})` : ""}. You have ${x.days} days after it arrives to accept it or open a dispute.`);
+    return { status: x.status };
   });
 }
 
@@ -300,6 +321,9 @@ export async function release(requestId: string, meId: string | null) {
     log(x, meId ? "Buyer accepted the delivery." : "Inspection window ended with no dispute: auto-accepted.");
     log(x, `PayPal Payouts sent ${usd(payout)} to ${seller.name} (batch ${batch}, ${status})${x.sample ? " (simulated)" : ""}; platform fee ${usd(x.paypal.feeCents!)}.`, "money");
     return { status: x.status };
+  }).then(async (out) => {
+    await mail(requestId, seller.id, `You've been paid: ${r.title}`, `PayPal Payouts sent ${usd(payout)} to your PayPal account. Leave a review for the buyer in the deal room.`);
+    return out;
   });
 }
 
@@ -327,7 +351,10 @@ export function openDispute(requestId: string, meId: string, b: Record<string, u
     };
     r.status = "disputed";
     log(r, `Buyer opened a dispute (${reason.replaceAll("_", " ")}). Payment is frozen; seller has ${DISPUTE_RESPONSE_HOURS} hours to respond.`, "warn");
-    return { status: r.status };
+    return { status: r.status, seller: winningThread(r).sellerId, title: r.title };
+  }).then(async (x) => {
+    await mail(requestId, x.seller, `Dispute opened: ${x.title}`, `The buyer opened a dispute. Payment is frozen until it's settled. Respond within ${DISPUTE_RESPONSE_HOURS} hours with a settlement proposal.`);
+    return { status: x.status };
   });
 }
 

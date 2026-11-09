@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Handshake } from "lucide-react";
 import { read } from "@/lib/store";
-import { viewerId, viewerIn } from "@/lib/viewer";
+import { viewerId, viewerIn, GUEST_ID } from "@/lib/viewer";
 import { SITE } from "@/lib/config/site";
 import { PersonaSwitcher } from "./PersonaSwitcher";
 export { StatusPill } from "./StatusPill";
@@ -21,7 +21,7 @@ export function Logo() {
 export async function Header() {
   const db = await read();
   const me = viewerIn(db, await viewerId());
-  const people = db.parties.map((p) => ({ id: p.id, name: p.name, role: p.role, city: p.city, handle: p.handle }));
+  const people = db.parties.filter((p) => p.demo).map((p) => ({ id: p.id, name: p.name, role: p.role, city: p.city, handle: p.handle, demo: true }));
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-ink-950/70 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-6 px-4 sm:px-6">
@@ -44,7 +44,13 @@ export async function Header() {
           <Badge tone="paypal" className="hidden sm:inline-flex">
             <span className="size-1.5 rounded-full bg-sky-300" /> PayPal sandbox
           </Badge>
-          <PersonaSwitcher me={{ id: me.id, name: me.name, role: me.role, city: me.city, handle: me.handle }} people={people} />
+          {me.id === GUEST_ID ? (
+            <Link href="/login" className="rounded-xl bg-[linear-gradient(135deg,#7c5cff,#5b8cff_55%,#22d3ee)] px-4 py-2 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgb(124_92_255/0.7)] transition hover:brightness-110">
+              Sign in
+            </Link>
+          ) : (
+            <PersonaSwitcher me={{ id: me.id, name: me.name, role: me.role, city: me.city, handle: me.handle, demo: me.demo }} people={people} />
+          )}
         </div>
       </div>
     </header>

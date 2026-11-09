@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { read } from "@/lib/store";
-import { VIEWER_COOKIE } from "@/lib/viewer";
+import { sessionCookie } from "@/lib/auth";
 
-/** Demo identity switch: browse as a buyer or one of the sellers. */
+/** One-click sign-in as a seeded demo account (for judges). Real accounts can't be entered this way. */
 export async function POST(req: Request) {
   const { id } = await req.json().catch(() => ({}));
-  if (!(await read()).parties.some((p) => p.id === id)) return NextResponse.json({ error: "unknown person" }, { status: 400 });
+  const p = (await read()).parties.find((x) => x.id === id);
+  if (!p?.demo) return NextResponse.json({ error: "not a demo account" }, { status: 400 });
   const res = NextResponse.json({ ok: true });
-  res.cookies.set(VIEWER_COOKIE, id, { path: "/", sameSite: "lax", httpOnly: true, maxAge: 60 * 60 * 24 * 30 });
+  res.cookies.set(sessionCookie(p.id));
   return res;
 }

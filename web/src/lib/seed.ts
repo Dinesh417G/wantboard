@@ -19,12 +19,12 @@ const hash = (t: unknown) => crypto.createHash("sha256").update(canonical(t)).di
 export const DEMO_BUYER_ID = "p_maya";
 
 const parties: Party[] = [
-  { id: "p_maya", name: "Maya Chen", handle: "maya", city: "Austin, TX", role: "buyer", paypalEmail: BUYER_EMAIL, categories: [], bio: "Restores mid-century hi-fi and builds custom guitar amps.", joinedAt: iso(-200) },
-  { id: "p_jordan", name: "Jordan Ellis", handle: "jordan", city: "Denver, CO", role: "buyer", paypalEmail: "", categories: [], bio: "Fleet manager for a small machine shop.", joinedAt: iso(-160) },
-  { id: "p_atlas", name: "Atlas Alloy Supply", handle: "atlas-alloy", city: "Houston, TX", role: "seller", paypalEmail: SELLER_EMAIL, categories: ["Industrial & raw materials", "Tools & machinery"], bio: "Certified metals and specialty alloys, cut to size. Mill certs on every order.", joinedAt: iso(-400) },
-  { id: "p_relic", name: "Relic & Rarity", handle: "relic-rarity", city: "Brooklyn, NY", role: "seller", paypalEmail: SELLER_EMAIL, categories: ["Rare & collectibles", "Vintage & antiques", "Electronics & components"], bio: "Vintage audio, NOS tubes and hard-to-find components, tested before shipping.", joinedAt: iso(-320) },
-  { id: "p_volt", name: "Vintage Volt Parts", handle: "vintage-volt", city: "Detroit, MI", role: "seller", paypalEmail: SELLER_EMAIL, categories: ["Auto & spare parts", "Vintage & antiques"], bio: "Rebuilt carburetors, NOS trim and classic-car electrics since 1998.", joinedAt: iso(-500) },
-  { id: "p_circuit", name: "CircuitVault", handle: "circuitvault", city: "San Jose, CA", role: "seller", paypalEmail: SELLER_EMAIL, categories: ["Electronics & components", "Tools & machinery"], bio: "Obsolete ICs, EOL industrial boards and test equipment.", joinedAt: iso(-90) },
+  { id: "p_maya", name: "Maya Chen", handle: "maya", city: "Austin, TX", role: "buyer", paypalEmail: BUYER_EMAIL, categories: [], bio: "Restores mid-century hi-fi and builds custom guitar amps.", joinedAt: iso(-200), demo: true },
+  { id: "p_jordan", name: "Jordan Ellis", handle: "jordan", city: "Denver, CO", role: "buyer", paypalEmail: "", categories: [], bio: "Fleet manager for a small machine shop.", joinedAt: iso(-160), demo: true },
+  { id: "p_atlas", name: "Atlas Alloy Supply", handle: "atlas-alloy", city: "Houston, TX", role: "seller", paypalEmail: SELLER_EMAIL, categories: ["Industrial & raw materials", "Tools & machinery"], bio: "Certified metals and specialty alloys, cut to size. Mill certs on every order.", joinedAt: iso(-400), demo: true },
+  { id: "p_relic", name: "Relic & Rarity", handle: "relic-rarity", city: "Brooklyn, NY", role: "seller", paypalEmail: SELLER_EMAIL, categories: ["Rare & collectibles", "Vintage & antiques", "Electronics & components"], bio: "Vintage audio, NOS tubes and hard-to-find components, tested before shipping.", joinedAt: iso(-320), demo: true },
+  { id: "p_volt", name: "Vintage Volt Parts", handle: "vintage-volt", city: "Detroit, MI", role: "seller", paypalEmail: SELLER_EMAIL, categories: ["Auto & spare parts", "Vintage & antiques"], bio: "Rebuilt carburetors, NOS trim and classic-car electrics since 1998.", joinedAt: iso(-500), demo: true },
+  { id: "p_circuit", name: "CircuitVault", handle: "circuitvault", city: "San Jose, CA", role: "seller", paypalEmail: SELLER_EMAIL, categories: ["Electronics & components", "Tools & machinery"], bio: "Obsolete ICs, EOL industrial boards and test equipment.", joinedAt: iso(-90), demo: true },
 ];
 
 const terms = (o: Partial<Terms> & { priceCents: number }): Terms => ({

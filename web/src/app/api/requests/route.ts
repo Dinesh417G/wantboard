@@ -27,7 +27,7 @@ export const POST = handle(async (req: Request) => {
 
   return mutate((db) => {
     const buyer = db.parties.find((p) => p.id === me);
-    if (!buyer || buyer.role !== "buyer") throw new Forbidden("Switch to a buyer to post a request");
+    if (!buyer || buyer.role !== "buyer") throw new Forbidden(buyer ? "Only buyer accounts can post a request" : "Sign in to post a request");
     const r: WantRequest = {
       id: id("req"),
       code: code(),

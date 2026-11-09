@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, Banknote, Hourglass, PackageCheck, Sparkles, Trophy } from "lucide-react";
 import { read } from "@/lib/store";
-import { viewerId, viewerIn } from "@/lib/viewer";
+import { requireViewer } from "@/lib/viewer";
 import { usd } from "@/lib/domain/money";
 import type { Db, Party, WantRequest } from "@/lib/types";
 import { StatusPill } from "@/components/StatusPill";
@@ -155,7 +155,7 @@ function BuyerDash({ db, me }: { db: Db; me: Party }) {
 
 export default async function Dashboard() {
   const db = await read();
-  const me = viewerIn(db, await viewerId());
+  const me = await requireViewer(db, "/dashboard");
   return (
     <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6">
       <div className="flex flex-wrap items-end justify-between gap-4">

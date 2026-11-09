@@ -204,7 +204,14 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
                   Live. Sellers in “{v.category}” can see your request and send offers here.
                 </Card>
               )}
-              {me === null && <Card className="p-6 text-sm text-muted">Switch to the buyer or a seller (top right) to negotiate.</Card>}
+              {me === null && (
+                <Card className="flex flex-wrap items-center gap-3 p-6 text-sm text-muted">
+                  Sellers can make offers here. Buyers see every offer on their own requests.
+                  <Link href={`/login?next=/r/${v.id}`} className="ml-auto rounded-xl bg-brand/20 px-4 py-2 text-violet-100 hover:bg-brand/30">
+                    Sign in to make an offer
+                  </Link>
+                </Card>
+              )}
 
               {showForm && me && (
                 <OfferForm
