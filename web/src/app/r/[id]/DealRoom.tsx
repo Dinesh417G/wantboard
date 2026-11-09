@@ -247,6 +247,7 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
                   setDraft={setDraft}
                   max={v.budgetCents}
                   limitCents={v.myLimitCents}
+                  feeBps={v.myFeeBps}
                   role={me}
                   busy={busy === "offer"}
                   onSubmit={sendOffer}

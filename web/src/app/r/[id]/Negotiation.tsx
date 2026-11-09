@@ -124,7 +124,7 @@ export function OfferTimeline({ thread, me, v, act, busy, onCounter }: { thread:
                   )}
                   {me === "seller" && (
                     <span className="ml-auto self-center text-[11px] text-dim">
-                      You receive <span className="num">{usd(feeBreakdown(o.terms.priceCents).payoutCents)}</span> after delivery
+                      You receive <span className="num">{usd(feeBreakdown(o.terms.priceCents, v.myFeeBps).payoutCents)}</span> after delivery
                     </span>
                   )}
                 </div>
@@ -170,7 +170,9 @@ export function OfferForm({
   onSubmit,
   busy,
   onCancel,
+  feeBps,
 }: {
+  feeBps: number;
   title: string;
   draft: Draft;
   setDraft: (d: Draft) => void;
@@ -239,8 +241,8 @@ export function OfferForm({
       )}
       {role === "seller" && Number.isFinite(cents) && cents > 0 && (
         <p className="mt-3 text-xs text-muted">
-          If accepted you receive <span className="num text-fg">{usd(feeBreakdown(cents).payoutCents)}</span> after the buyer confirms delivery
-          (platform fee <span className="num">{usd(feeBreakdown(cents).feeCents)}</span>).
+          If accepted you receive <span className="num text-fg">{usd(feeBreakdown(cents, feeBps).payoutCents)}</span> after the buyer confirms delivery
+          (platform fee <span className="num">{usd(feeBreakdown(cents, feeBps).feeCents)}</span>).
         </p>
       )}
       <div className="mt-4 flex flex-wrap items-center gap-3">

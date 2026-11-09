@@ -1,3 +1,4 @@
+import { isPro } from "@/lib/pro";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, BadgeCheck, MapPin, Star } from "lucide-react";
@@ -48,6 +49,7 @@ export default async function Sellers() {
                 <span>
                   <span className="num text-fg">{s.completed}</span> deals
                 </span>
+                {isPro(p) && <span className="rounded-full bg-[linear-gradient(135deg,#7c5cff,#22d3ee)] px-2 py-0.5 text-[10px] font-semibold text-white">PRO</span>}
                 <span className="inline-flex items-center gap-1">
                   <Star className="size-3.5 fill-amber text-amber" /> <span className="num text-fg">{s.avgRating?.toFixed(1) ?? "—"}</span>
                 </span>

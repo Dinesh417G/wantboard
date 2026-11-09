@@ -2,8 +2,9 @@
 // and the AI copilot is built only from this filtered view, so it can never leak the other side's data.
 import type { Address, Db, Match, Party, Thread, WantRequest } from "./types";
 import { canServe, publicArea, reachShort } from "./domain/location";
+import { feeBpsFor, isPro } from "./pro";
 
-export type PartyLite = Pick<Party, "id" | "name" | "handle" | "city" | "role" | "bio" | "categories" | "joinedAt"> & { payoutVerified: boolean; paypalConnected: boolean; paypalVerified: boolean };
+export type PartyLite = Pick<Party, "id" | "name" | "handle" | "city" | "role" | "bio" | "categories" | "joinedAt"> & { payoutVerified: boolean; paypalConnected: boolean; paypalVerified: boolean; pro: boolean };
 
 export type RequestView = Omit<WantRequest, "threads" | "buyerTargetCents" | "matches" | "shipTo"> & {
   /** Full address for the buyer and (after agreement) the winning seller; city, state and ZIP prefix for everyone else. */
@@ -11,6 +12,8 @@ export type RequestView = Omit<WantRequest, "threads" | "buyerTargetCents" | "ma
   reachText: string;
   /** Viewer is a seller whose location the buyer accepts. */
   canOffer: boolean;
+  /** Platform fee rate the viewing seller would pay (Clinch Pro pays less). */
+  myFeeBps: number;
   matches?: (Match & { sellerName: string })[];
   /** Set when the viewer is a seller. */
   mySellerId?: string;
@@ -34,6 +37,7 @@ export const lite = (p: Party): PartyLite => ({
   payoutVerified: Boolean(p.paypalEmail || p.paypal),
   paypalConnected: Boolean(p.paypal),
   paypalVerified: Boolean(p.paypal?.verified),
+  pro: isPro(p),
 });
 
 export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView {
@@ -53,6 +57,7 @@ export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView 
     shipTo: shipTo ? (seesAddress ? { ...shipTo, full: true } : { ...publicArea(shipTo), full: false }) : undefined,
     reachText: reachShort(r),
     canOffer: viewer.role === "seller" && canServe(viewer, r),
+    myFeeBps: r.paypal.feeBps ?? feeBpsFor(viewer),
     reviews,
     matches: matches
       ?.filter((m) => role === "buyer" || m.sellerId === viewer.id)

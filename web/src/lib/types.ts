@@ -35,7 +35,11 @@ export type Party = {
   address?: Address & { source: "paypal" | "manual" };
   /** How a seller gets paid. Default: PayPal (linked account, else paypalEmail). */
   payout?: { method: "paypal" | "venmo"; venmo?: string };
+  /** Clinch Pro subscription (PayPal Subscriptions API). */
+  pro?: ProSub;
 };
+
+export type ProSub = { subscriptionId: string; status: string; since: string; nextBillingAt?: string; updatedAt: string };
 
 export type Address = { line1: string; line2?: string; city: string; state: string; zip: string; country: "US" };
 /** Which sellers may make offers, relative to the delivery address. */
@@ -175,6 +179,8 @@ export type WantRequest = {
     disputeCheckedAt?: string;
     payoutCents?: number;
     feeCents?: number;
+    /** Fee rate locked at agreement (Pro sellers pay less). */
+    feeBps?: number;
   };
 };
 
@@ -182,4 +188,10 @@ export type Match = { sellerId: string; score: number; reason: string; source: "
 
 export type OtpChallenge = { email: string; hash: string; expiresAt: string; attempts: number; createdAt: string };
 
-export type Db = { parties: Party[]; requests: WantRequest[]; otps?: OtpChallenge[] };
+export type Db = {
+  parties: Party[];
+  requests: WantRequest[];
+  otps?: OtpChallenge[];
+  /** PayPal catalog product + billing plan for Clinch Pro, created once. */
+  meta?: { proProductId?: string; proPlanId?: string };
+};

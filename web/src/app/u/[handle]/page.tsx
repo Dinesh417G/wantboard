@@ -1,3 +1,4 @@
+import { isPro } from "@/lib/pro";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { BadgeCheck, CalendarDays, MapPin, Star } from "lucide-react";
@@ -32,7 +33,10 @@ export default async function Profile({ params }: Props) {
         <div className="grid gap-6 md:grid-cols-[1fr_280px]">
           <div>
             <Badge tone={p.role === "seller" ? "cyan" : "brand"}>{p.role}</Badge>
-            <h1 className="mt-3 text-4xl font-semibold tracking-tight">{p.name}</h1>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight">
+              {p.name}
+              {isPro(p) && <span className="ml-3 rounded-full bg-[linear-gradient(135deg,#7c5cff,#22d3ee)] px-2.5 py-1 align-middle text-xs font-semibold text-white">PRO</span>}
+            </h1>
             <div className="mt-3 flex flex-wrap gap-4 text-sm text-muted">
               <span className="inline-flex items-center gap-1.5">
                 <MapPin className="size-4" /> {p.city}

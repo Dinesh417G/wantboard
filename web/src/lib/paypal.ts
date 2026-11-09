@@ -387,3 +387,52 @@ export function acceptDisputeClaim(id: string, note: string) {
 export function sendDisputeMessage(id: string, message: string) {
   return multipart(`/v1/customer/disputes/${id}/send-message`, { message: message.slice(0, 2000) });
 }
+
+// ---------- Clinch Pro: PayPal Subscriptions ----------
+
+/** Create the catalog product and monthly billing plan (idempotent: same request ids return the same objects). */
+export async function createProPlan(priceUsd: string) {
+  const product = await call<{ id: string }>(
+    "POST",
+    "/v1/catalogs/products",
+    { name: "Clinch Pro", description: "Lower platform fee (3%) and priority AI matching for Clinch sellers.", type: "SERVICE", category: "SOFTWARE" },
+    "clinch-pro-product-v1",
+  );
+  const plan = await call<{ id: string }>(
+    "POST",
+    "/v1/billing/plans",
+    {
+      product_id: product.id,
+      name: "Clinch Pro monthly",
+      description: "3% platform fee instead of 6%, priority matching, Pro badge.",
+      billing_cycles: [
+        {
+          frequency: { interval_unit: "MONTH", interval_count: 1 },
+          tenure_type: "REGULAR",
+          sequence: 1,
+          total_cycles: 0,
+          pricing_scheme: { fixed_price: { value: priceUsd, currency_code: "USD" } },
+        },
+      ],
+      payment_preferences: { auto_bill_outstanding: true, setup_fee_failure_action: "CANCEL", payment_failure_threshold: 2 },
+    },
+    `clinch-pro-plan-v1-${priceUsd}`,
+  );
+  return { productId: product.id, planId: plan.id };
+}
+
+export async function getSubscription(id: string) {
+  const s = await call("GET", `/v1/billing/subscriptions/${encodeURIComponent(id)}`);
+  return {
+    id: s.id as string,
+    status: s.status as string, // APPROVAL_PENDING, APPROVED, ACTIVE, SUSPENDED, CANCELLED, EXPIRED
+    planId: s.plan_id as string,
+    customId: s.custom_id as string | undefined,
+    nextBillingAt: s.billing_info?.next_billing_time as string | undefined,
+    startedAt: (s.start_time ?? s.create_time) as string,
+  };
+}
+
+export function cancelSubscription(id: string, reason: string) {
+  return call("POST", `/v1/billing/subscriptions/${encodeURIComponent(id)}/cancel`, { reason: reason.slice(0, 128) });
+}

@@ -1,3 +1,4 @@
+import { isPro } from "@/lib/pro";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, Banknote, Hourglass, PackageCheck, Sparkles, Trophy } from "lucide-react";
@@ -164,9 +165,16 @@ export default async function Dashboard() {
           <h1 className="mt-1 text-4xl font-semibold tracking-tight">Hi, {me.name.split(" ")[0]}</h1>
           <p className="mt-2 text-muted">{me.role === "seller" ? `You sell: ${me.categories.join(", ")}.` : "Everything you're buying, in one place."}</p>
         </div>
-        <ButtonLink href={me.role === "seller" ? `/u/${me.handle}` : "/post"} variant="secondary">
-          {me.role === "seller" ? "View my trust profile" : "Post a need"}
-        </ButtonLink>
+        <div className="flex flex-wrap gap-2">
+          {me.role === "seller" && (
+            <a href="/pro" className="inline-flex h-10 items-center gap-2 rounded-xl border border-brand/40 bg-brand/10 px-4 text-sm text-violet-100 hover:bg-brand/20">
+              {isPro(me) ? "Clinch Pro · 3% fee" : "Get Clinch Pro: 3% fee"}
+            </a>
+          )}
+          <ButtonLink href={me.role === "seller" ? `/u/${me.handle}` : "/post"} variant="secondary">
+            {me.role === "seller" ? "View my trust profile" : "Post a need"}
+          </ButtonLink>
+        </div>
       </div>
       {me.role === "seller" ? <SellerDash db={db} me={me} /> : <BuyerDash db={db} me={me} />}
     </div>

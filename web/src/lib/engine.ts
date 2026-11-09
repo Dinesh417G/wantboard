@@ -10,6 +10,8 @@ import { feeBreakdown, usd, parseDollars } from "./domain/money";
 import { scanMessage } from "./domain/scam-shield";
 import { cleanImages } from "./domain/images";
 import { matchSellers } from "./ai";
+import { feeBpsFor, isPro } from "./pro";
+import { PRO } from "./config/site";
 import { adminAlert, notify, siteUrl } from "./email";
 import { DISPUTE_RESPONSE_HOURS, MAX_ROUNDS, OFFER_TTL_HOURS } from "./config/site";
 import type { Db, Dispute, Offer, Party, Thread, WantRequest } from "./types";
@@ -98,7 +100,11 @@ export async function confirmHold(requestId: string, meId: string, b: Record<str
   const orderId = c.r.paypal.orderId ?? (typeof b.orderId === "string" ? b.orderId : "");
   if (!orderId) throw new Conflict("PayPal order not found. Click the PayPal button again.");
   const auth = await authorizeOrder(orderId, requestId);
-  const matched = await matchSellers(c.r, c.db.parties.filter((p) => p.role === "seller" && canServe(p, c.r)));
+  const eligible = c.db.parties.filter((p) => p.role === "seller" && canServe(p, c.r));
+  // Clinch Pro sellers get priority: a small score boost, then re-rank.
+  const matched = (await matchSellers(c.r, eligible))
+    .map((m) => (isPro(eligible.find((p) => p.id === m.sellerId)) ? { ...m, score: Math.min(100, m.score + PRO.matchBoost), reason: `${m.reason} (Pro seller)` } : m))
+    .sort((a, b) => b.score - a.score);
   return commit(requestId, (r, db) => {
     r.paypal.orderId = orderId;
     r.paypal.authorizationId = auth.authorizationId;
@@ -244,7 +250,8 @@ export async function acceptOffer(requestId: string, meId: string, b: Record<str
   if (o.status !== "open" || o.id !== t.offers.at(-1)?.id || o.version !== Number(b.version))
     throw new Conflict("That offer changed or expired. Review the latest version before accepting.");
 
-  const fees = feeBreakdown(o.terms.priceCents);
+  const feeBps = feeBpsFor(c.db.parties.find((p) => p.id === t.sellerId));
+  const fees = feeBreakdown(o.terms.priceCents, feeBps);
   let captureId = "SIMULATED";
   let captureStatus = "COMPLETED";
   if (!c.r.sample) {
@@ -266,6 +273,7 @@ export async function acceptOffer(requestId: string, meId: string, b: Record<str
     r.paypal.captureId = captureId;
     r.paypal.capturedCents = offer.terms.priceCents;
     r.paypal.feeCents = fees.feeCents;
+    r.paypal.feeBps = feeBps;
     r.paypal.payoutCents = fees.payoutCents;
     r.status = "agreed";
     const seller = db.parties.find((p) => p.id === thread.sellerId)!;
@@ -523,7 +531,7 @@ export async function acceptSettlement(requestId: string, meId: string) {
   if (r.status !== "disputed" || !r.dispute?.proposal) throw new Conflict("no settlement to accept");
   const refundCents = r.dispute.proposal.refundCents;
   const paid = r.paypal.capturedCents!;
-  const fees = feeBreakdown(paid - refundCents);
+  const fees = feeBreakdown(paid - refundCents, r.paypal.feeBps);
   let refundId = "SIMULATED";
   let refundStatus = "COMPLETED";
   if (refundCents > 0 && !r.sample) {

@@ -8,6 +8,8 @@ export const SITE = {
 
 /** Platform fee in basis points, deducted from the seller payout (600 = 6%). Covers PayPal processing. */
 export const PLATFORM_FEE_BPS = 600;
+/** Clinch Pro (PayPal Subscriptions): sellers pay monthly for a lower fee and priority matching. */
+export const PRO = { priceUsd: "9.99", feeBps: 300, matchBoost: 8, name: "Clinch Pro" } as const;
 /** Default inspection window after delivery, in days. */
 export const DEFAULT_INSPECTION_DAYS = 3;
 /** Default offer validity, in hours. Shown as a real countdown, never invented urgency. */
