@@ -154,14 +154,23 @@ export async function payoutSeller(opts: { batchKey: string; email: string; cent
   return { payoutBatchId: res.batch_header.payout_batch_id as string, status: res.batch_header.batch_status as string };
 }
 
-export function verifyWebhook(headers: Headers, event: unknown, webhookId: string) {
-  return call<{ verification_status: string }>("POST", "/v1/notifications/verify-webhook-signature", {
+/** Ask PayPal to verify a webhook. The event is embedded as the exact raw body PayPal sent (re-serializing can break it). */
+export async function verifyWebhook(headers: Headers, rawEvent: string, webhookId: string) {
+  const meta = {
     auth_algo: headers.get("paypal-auth-algo"),
     cert_url: headers.get("paypal-cert-url"),
     transmission_id: headers.get("paypal-transmission-id"),
     transmission_sig: headers.get("paypal-transmission-sig"),
     transmission_time: headers.get("paypal-transmission-time"),
     webhook_id: webhookId,
-    webhook_event: event,
+  };
+  const body = JSON.stringify(meta).slice(0, -1) + `,"webhook_event":${rawEvent}}`;
+  const res = await fetch(`${BASE}/v1/notifications/verify-webhook-signature`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" },
+    body,
+    cache: "no-store",
   });
+  const out = await res.json().catch(() => ({}));
+  return { verification_status: String(out.verification_status ?? `HTTP ${res.status}`), detail: res.ok ? undefined : out };
 }

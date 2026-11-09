@@ -4,12 +4,21 @@ import { mutate, log } from "@/lib/store";
 
 /** PayPal webhook receiver. Needs PAYPAL_WEBHOOK_ID (from the dashboard, once a public URL exists). */
 export async function POST(req: Request) {
-  const event = await req.json().catch(() => null);
-  if (!event) return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
+  const raw = await req.text();
+  let event: { id?: string; event_type?: string; resource?: Record<string, any> }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  try {
+    event = JSON.parse(raw);
+  } catch {
+    return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
+  }
   const webhookId = process.env.PAYPAL_WEBHOOK_ID;
   if (!webhookId) return NextResponse.json({ error: "webhook not configured" }, { status: 503 });
-  const v = await verifyWebhook(req.headers, event, webhookId).catch(() => null);
-  if (v?.verification_status !== "SUCCESS") return NextResponse.json({ error: "bad signature" }, { status: 400 });
+  const v = await verifyWebhook(req.headers, raw, webhookId).catch((e) => ({ verification_status: `ERROR ${(e as Error).message}`, detail: undefined }));
+  if (v.verification_status !== "SUCCESS") {
+    console.warn("[webhook] rejected", event.event_type, event.id, v.verification_status, JSON.stringify(v.detail ?? "").slice(0, 300));
+    return NextResponse.json({ error: "bad signature" }, { status: 400 });
+  }
+  console.info("[webhook] verified", event.event_type, event.id);
 
   const res = event.resource ?? {};
   const ids: string[] = [
