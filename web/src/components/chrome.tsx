@@ -21,7 +21,7 @@ export function Logo() {
 export async function Header() {
   const db = await read();
   const me = viewerIn(db, await viewerId());
-  const people = db.parties.map((p) => ({ id: p.id, name: p.name, role: p.role, city: p.city }));
+  const people = db.parties.map((p) => ({ id: p.id, name: p.name, role: p.role, city: p.city, handle: p.handle }));
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-ink-950/70 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-6 px-4 sm:px-6">
@@ -30,6 +30,7 @@ export async function Header() {
           {[
             ["/dashboard", "Dashboard"],
             ["/board", "Live board"],
+            ["/sellers", "Sellers"],
             ["/post", "Post a need"],
             ["/#how", "How it works"],
             ["/#compare", "Compare"],
@@ -43,7 +44,7 @@ export async function Header() {
           <Badge tone="paypal" className="hidden sm:inline-flex">
             <span className="size-1.5 rounded-full bg-sky-300" /> PayPal sandbox
           </Badge>
-          <PersonaSwitcher me={{ id: me.id, name: me.name, role: me.role, city: me.city }} people={people} />
+          <PersonaSwitcher me={{ id: me.id, name: me.name, role: me.role, city: me.city, handle: me.handle }} people={people} />
         </div>
       </div>
     </header>

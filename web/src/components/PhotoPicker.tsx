@@ -108,7 +108,6 @@ export function Gallery({ urls, className }: { urls: string[]; className?: strin
       <AnimatePresence>
         {open && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setOpen(null)} className="fixed inset-0 z-50 grid place-items-center bg-black/85 p-6 backdrop-blur-sm">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <motion.img initial={{ scale: 0.95 }} animate={{ scale: 1 }} src={open} alt="" className="max-h-full max-w-full rounded-2xl" />
           </motion.div>
         )}

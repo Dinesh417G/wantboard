@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { Check, ChevronDown, ShoppingBag, Store } from "lucide-react";
 
-type P = { id: string; name: string; role: "buyer" | "seller"; city: string };
+type P = { id: string; name: string; role: "buyer" | "seller"; city: string; handle: string };
 
 export function PersonaSwitcher({ me, people }: { me: P; people: P[] }) {
   const [open, setOpen] = useState(false);
@@ -47,6 +47,9 @@ export function PersonaSwitcher({ me, people }: { me: P; people: P[] }) {
             role="listbox"
           >
             <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-dim">Demo: switch who you are</div>
+            <a href={`/u/${people.find((p) => p.id === me.id)?.handle ?? ""}`} className="mx-1.5 mb-1 block rounded-xl border border-line px-3 py-2 text-xs text-muted transition hover:bg-white/5 hover:text-fg">
+              View my profile →
+            </a>
             {(["buyer", "seller"] as const).map((role) => (
               <div key={role}>
                 <div className="px-3 pt-2 pb-1 text-[11px] font-medium text-muted">{role === "buyer" ? "Buyers" : "Sellers"}</div>
