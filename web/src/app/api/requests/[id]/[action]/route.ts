@@ -14,7 +14,7 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
     case "hold":
       return E.createHold(id, me);
     case "authorize":
-      return E.confirmHold(id, me);
+      return E.confirmHold(id, me, b);
     case "offer":
       return E.makeOffer(id, me, b);
     case "accept":

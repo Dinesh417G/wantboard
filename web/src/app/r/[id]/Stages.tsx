@@ -67,8 +67,8 @@ export function HoldPanel({ v, clientId, act, setError }: { v: RequestView; clie
                     if (!res.ok) throw new Error(out.error);
                     return out.orderId;
                   }}
-                  onApprove={async () => {
-                    await act("authorize");
+                  onApprove={async (data) => {
+                    await act("authorize", { orderId: data.orderID });
                   }}
                   onError={(e) => setError(String(e?.message ?? "PayPal error"))}
                 />

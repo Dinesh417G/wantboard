@@ -83,17 +83,23 @@ export async function createHold(requestId: string, meId: string) {
   mustBuyer(c);
   if (c.r.status !== "draft") throw new Conflict("budget already secured");
   const order = await createAuthorizeOrder(c.r.id, c.r.budgetCents, c.r.title, c.r.shipTo);
-  commit(requestId, (r) => void (r.paypal.orderId = order.id));
+  // Must be awaited: on serverless the function can stop right after the response.
+  await commit(requestId, (r) => void (r.paypal.orderId = order.id));
   return { orderId: order.id };
 }
 
-export async function confirmHold(requestId: string, meId: string) {
+export async function confirmHold(requestId: string, meId: string, b: Record<string, unknown> = {}) {
   const c = await load(requestId, meId);
   mustBuyer(c);
-  if (c.r.status !== "draft" || !c.r.paypal.orderId) throw new Conflict("nothing to authorize");
-  const auth = await authorizeOrder(c.r.paypal.orderId);
+  if (c.r.status === "open" && c.r.paypal.authorizationId) return { status: c.r.status }; // double click / retry
+  if (c.r.status !== "draft") throw new Conflict("this request is past the hold step");
+  // The order id from PayPal's onApprove is a fallback; authorizeOrder checks it belongs to this request.
+  const orderId = c.r.paypal.orderId ?? (typeof b.orderId === "string" ? b.orderId : "");
+  if (!orderId) throw new Conflict("PayPal order not found. Click the PayPal button again.");
+  const auth = await authorizeOrder(orderId, requestId);
   const matched = await matchSellers(c.r, c.db.parties.filter((p) => p.role === "seller" && canServe(p, c.r)));
   return commit(requestId, (r, db) => {
+    r.paypal.orderId = orderId;
     r.paypal.authorizationId = auth.authorizationId;
     r.paypal.authorizationExpires = auth.expires;
     r.status = "open";

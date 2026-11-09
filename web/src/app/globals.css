@@ -117,3 +117,16 @@ input[type="date"]::-webkit-calendar-picker-indicator {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Native dropdown lists: dark background, light text (Windows otherwise draws white text on a white list). */
+html {
+  color-scheme: dark;
+}
+select option,
+select optgroup {
+  background-color: #11141f;
+  color: #eef0f7;
+}
+select option:checked {
+  background-color: #2a2350;
+}

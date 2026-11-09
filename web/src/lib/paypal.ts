@@ -112,9 +112,10 @@ export function createAuthorizeOrder(requestId: string, cents: number, title: st
 }
 
 /** After buyer approval: place the hold. Returns the authorization id. */
-export async function authorizeOrder(orderId: string) {
+export async function authorizeOrder(orderId: string, requestId: string) {
   // Card payments (and some wallet flows) come back already authorized; reuse that authorization.
   const existing = await call("GET", `/v2/checkout/orders/${orderId}`);
+  if (existing.purchase_units?.[0]?.custom_id !== requestId) throw new Error("That PayPal order belongs to a different request");
   const res = existing.purchase_units?.[0]?.payments?.authorizations?.[0]
     ? existing
     : await call("POST", `/v2/checkout/orders/${orderId}/authorize`, {}, `auth-${orderId}`);
