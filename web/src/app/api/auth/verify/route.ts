@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { codeMatches, cookieOpts, makeToken, normalizeEmail, sessionCookie, SIGNUP_COOKIE } from "@/lib/auth";
 import { mutate, nowIso } from "@/lib/store";
+import { adminAlert } from "@/lib/email";
 
 /** Step 2: check the code. Existing account → signed in. New email → go to onboarding. */
 export async function POST(req: Request) {
@@ -20,11 +21,12 @@ export async function POST(req: Request) {
     }
     db.otps = (db.otps ?? []).filter((o) => o.email !== email); // codes are single-use
     const party = db.parties.find((p) => p.email === email);
-    return { partyId: party?.id } as const;
+    return { partyId: party?.id, name: party?.name, role: party?.role } as const;
   });
 
   if ("error" in result) return NextResponse.json({ error: result.error }, { status: result.status });
   if (result.partyId) {
+    adminAlert(`Sign-in: ${result.name}`, { Name: result.name, Role: result.role, Email: email, Time: `${nowIso().slice(0, 16).replace("T", " ")} UTC`, IP: req.headers.get("x-forwarded-for")?.split(",")[0] ?? undefined });
     const res = NextResponse.json({ ok: true, next: "signed-in" });
     res.cookies.set(sessionCookie(result.partyId));
     return res;

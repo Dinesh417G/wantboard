@@ -4,6 +4,7 @@ import { readToken, sessionCookie, SIGNUP_COOKIE, validEmail, normalizeEmail } f
 import { id, mutate, nowIso, read } from "@/lib/store";
 import { viewerId, viewerIn, GUEST_ID } from "@/lib/viewer";
 import { CATEGORIES, type Category, type Party } from "@/lib/types";
+import { adminAlert, siteUrl } from "@/lib/email";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
@@ -46,6 +47,7 @@ export async function POST(req: Request) {
     db.parties.push(p);
     return p.id;
   });
+  adminAlert(`New ${f.role} account: ${f.name}`, { Name: f.name, Role: f.role, Email: signup.email, City: f.city, "PayPal email": f.paypalEmail || "—", Categories: f.categories.join(", ") || "—" }, `${siteUrl()}/u/${handle}`);
   const res = NextResponse.json({ ok: true });
   res.cookies.set(sessionCookie(partyId));
   res.cookies.set({ name: SIGNUP_COOKIE, value: "", path: "/", maxAge: 0 });

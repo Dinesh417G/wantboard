@@ -8,7 +8,7 @@ import { feeBreakdown, usd, parseDollars } from "./domain/money";
 import { scanMessage } from "./domain/scam-shield";
 import { cleanImages } from "./domain/images";
 import { matchSellers } from "./ai";
-import { notify } from "./email";
+import { adminAlert, notify, siteUrl } from "./email";
 import { DISPUTE_RESPONSE_HOURS, MAX_ROUNDS, OFFER_TTL_HOURS } from "./config/site";
 import type { Db, Dispute, Offer, Party, Thread, WantRequest } from "./types";
 
@@ -104,6 +104,7 @@ export async function confirmHold(requestId: string, meId: string) {
     }
     return { status: r.status };
   }).then(async (out) => {
+    adminAlert(`New request live: ${c.r.title}`, { Buyer: c.me.name, Category: c.r.category, "PayPal hold": usd(c.r.budgetCents), Authorization: auth.authorizationId, "Matched sellers": String(matched.length) }, `${siteUrl()}/r/${requestId}`);
     for (const m of matched) await mail(requestId, m.sellerId, `New match: ${c.r.title}`, `A buyer needs "${c.r.title}" and PayPal is holding ${usd(c.r.budgetCents)} for it. Copilot matched you (${m.score}/100): ${m.reason} Send an offer in the deal room.`);
     return out;
   });

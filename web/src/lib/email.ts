@@ -1,9 +1,21 @@
 // Transactional email through Resend's REST API. Server-only.
 // Without RESEND_API_KEY: in development the message is printed to the server log; in production it is skipped.
 import "server-only";
+import { after } from "next/server";
 import { SITE } from "./config/site";
 
+/** Run after the response is sent, but keep the serverless function alive until it finishes. */
+function background(task: () => Promise<unknown>) {
+  try {
+    after(task);
+  } catch {
+    void task(); // outside a request (scripts, tests)
+  }
+}
+
 const FROM = process.env.EMAIL_FROM ?? `${SITE.name} <onboarding@resend.dev>`;
+/** Clinch support inbox: gets admin alerts, a BCC of deal emails, and user replies. */
+const ADMIN = process.env.ADMIN_NOTIFY_EMAIL || "";
 export const siteUrl = () =>
   process.env.NEXT_PUBLIC_SITE_URL ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3007");
 
@@ -21,7 +33,16 @@ ${cta ? `<tr><td style="padding-top:24px"><a href="${cta.url}" style="display:in
 </table></td></tr></table></body></html>`;
 }
 
-export async function sendEmail(to: string, subject: string, title: string, bodyHtml: string, cta?: { label: string; url: string }): Promise<{ ok: boolean; id?: string; error?: string }> {
+type Opts = { bccAdmin?: boolean };
+
+export async function sendEmail(
+  to: string,
+  subject: string,
+  title: string,
+  bodyHtml: string,
+  cta?: { label: string; url: string },
+  opts: Opts = {},
+): Promise<{ ok: boolean; id?: string; error?: string }> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
     if (process.env.NODE_ENV !== "production") console.info(`[email:dev] to=${to} subject="${subject}"\n${bodyHtml.replace(/<[^>]+>/g, " ")}`);
@@ -31,7 +52,14 @@ export async function sendEmail(to: string, subject: string, title: string, body
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: FROM, to: [to], subject, html: layout(title, bodyHtml, cta) }),
+      body: JSON.stringify({
+        from: FROM,
+        to: [to],
+        subject,
+        html: layout(title, bodyHtml, cta),
+        ...(ADMIN ? { reply_to: ADMIN } : {}),
+        ...(ADMIN && opts.bccAdmin && to.toLowerCase() !== ADMIN.toLowerCase() ? { bcc: [ADMIN] } : {}),
+      }),
       signal: AbortSignal.timeout(10_000),
     });
     const out = await res.json().catch(() => ({}));
@@ -59,5 +87,15 @@ export function codeEmail(to: string, code: string) {
 /** Deal notifications. Best effort: never blocks or fails a deal action. */
 export function notify(to: string | undefined, subject: string, text: string, requestId: string) {
   if (!to) return;
-  void sendEmail(to, subject, subject, esc(text), { label: "Open the deal room", url: `${siteUrl()}/r/${requestId}` });
+  background(() => sendEmail(to, subject, subject, esc(text), { label: "Open the deal room", url: `${siteUrl()}/r/${requestId}` }, { bccAdmin: true }));
+}
+
+/** Alert the Clinch support inbox (sign-ups, sign-ins, new requests). Never used for sign-in codes. */
+export function adminAlert(subject: string, lines: Record<string, string | undefined>, link?: string) {
+  if (!ADMIN) return;
+  const rows = Object.entries(lines)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `<tr><td style="color:#6b7286;padding:2px 12px 2px 0">${esc(k)}</td><td>${esc(v!)}</td></tr>`)
+    .join("");
+  background(() => sendEmail(ADMIN, `[Clinch admin] ${subject}`, subject, `<table>${rows}</table>`, link ? { label: "Open", url: link } : undefined));
 }
