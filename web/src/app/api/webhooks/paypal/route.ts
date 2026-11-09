@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
-import { verifyWebhook } from "@/lib/paypal";
-import { mutate, log } from "@/lib/store";
+import { disputedCaptureIds, getDispute, verifyWebhook } from "@/lib/paypal";
+import { mutate, log, read } from "@/lib/store";
+import { applyPayoutStatus, applyPayPalDispute } from "@/lib/engine";
+import { refreshPro } from "@/lib/pro";
+import type { WantRequest } from "@/lib/types";
 
-/** PayPal webhook receiver. Needs PAYPAL_WEBHOOK_ID (from the dashboard, once a public URL exists). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- PayPal webhook resources are loosely typed
+type Resource = Record<string, any>;
+
+/** PayPal webhook receiver. Needs PAYPAL_WEBHOOK_ID (from the dashboard). Every event is signature-checked by PayPal first. */
 export async function POST(req: Request) {
   const raw = await req.text();
-  let event: { id?: string; event_type?: string; resource?: Record<string, any> }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  let event: { id?: string; event_type?: string; resource?: Resource };
   try {
     event = JSON.parse(raw);
   } catch {
@@ -18,9 +24,34 @@ export async function POST(req: Request) {
     console.warn("[webhook] rejected", event.event_type, event.id, v.verification_status, JSON.stringify(v.detail ?? "").slice(0, 300));
     return NextResponse.json({ error: "bad signature" }, { status: 400 });
   }
-  console.info("[webhook] verified", event.event_type, event.id);
+  const type = String(event.event_type ?? "");
+  console.info("[webhook] verified", type, event.id);
+  const res: Resource = event.resource ?? {};
 
-  const res = event.resource ?? {};
+  try {
+    // Seller payouts: item succeeded / unclaimed / failed / returned...
+    if (type.startsWith("PAYMENT.PAYOUTS-ITEM.")) {
+      const r = await findRequest([res.payout_batch_id]);
+      if (r) await applyPayoutStatus(r.id, String(res.transaction_status ?? type.split(".").at(-1)), res.payout_item_id, res.errors?.message);
+    }
+    // Disputes the buyer opened in PayPal.
+    if (type.startsWith("CUSTOMER.DISPUTE.") && res.dispute_id) {
+      const r = await findRequest(disputedCaptureIds(res));
+      if (r) await applyPayPalDispute(r.id, await getDispute(res.dispute_id));
+    }
+    // Clinch Pro subscriptions (activated, cancelled, suspended, renewed...).
+    const subId = type.startsWith("BILLING.SUBSCRIPTION.") ? res.id : type === "PAYMENT.SALE.COMPLETED" ? res.billing_agreement_id : undefined;
+    if (typeof subId === "string") {
+      const p = (await read()).parties.find((x) => x.pro?.subscriptionId === subId);
+      if (p) await refreshPro(p.id, subId);
+    }
+  } catch (e) {
+    // Answer 500 so PayPal retries later.
+    console.warn("[webhook] handler failed", type, (e as Error).message);
+    return NextResponse.json({ error: "temporary failure" }, { status: 500 });
+  }
+
+  // Audit trail on the deal for every money event we can match.
   const ids: string[] = [
     res.id,
     res.custom_id,
@@ -28,17 +59,22 @@ export async function POST(req: Request) {
     res.supplementary_data?.related_ids?.authorization_id,
     res.batch_header?.payout_batch_id,
     res.payout_batch_id,
+    ...disputedCaptureIds(res),
   ].filter((x): x is string => typeof x === "string");
-
   await mutate((db) => {
-    const r = db.requests.find(
-      (x) =>
-        ids.includes(x.id) ||
-        Object.values(x.paypal).some((p) => typeof p === "string" && ids.includes(p)) ||
-        x.paypal.refunds.some((f) => ids.includes(f.id)),
-    );
+    const r = db.requests.find((x) => matches(x, ids));
     const tag = `(event ${String(event.id ?? "").slice(0, 40)})`;
-    if (r && !r.events.some((e) => e.text.includes(tag))) log(r, `PayPal webhook confirmed: ${event.event_type} ${tag}`, "money");
+    if (r && !r.events.some((e) => e.text.includes(tag))) log(r, `PayPal webhook confirmed: ${type} ${tag}`, "money");
   });
   return NextResponse.json({ ok: true });
+}
+
+function matches(r: WantRequest, ids: string[]) {
+  return ids.includes(r.id) || Object.values(r.paypal).some((p) => typeof p === "string" && ids.includes(p)) || r.paypal.refunds.some((f) => ids.includes(f.id));
+}
+
+async function findRequest(ids: unknown[]) {
+  const list = ids.filter((x): x is string => typeof x === "string" && !!x);
+  if (!list.length) return undefined;
+  return (await read()).requests.find((r) => matches(r, list));
 }
