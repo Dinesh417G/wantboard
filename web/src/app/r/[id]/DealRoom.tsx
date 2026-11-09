@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, Lock, MapPin, ShieldCheck, Users, XCircle } from "lucide-react";
 import type { RequestView } from "@/lib/dto";
 import type { Offer } from "@/lib/types";
@@ -15,6 +15,8 @@ import { AfterAgreement, AgreementCard, HoldPanel, Stepper } from "./Stages";
 import { Gallery } from "@/components/PhotoPicker";
 import { Sparkles } from "lucide-react";
 
+const HONOR_MS = 3 * 86_400_000;
+
 export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: string; canSell: boolean }) {
   const { act, busy, error, setError } = useAct(v.id);
   const me = v.viewerRole === "visitor" ? null : v.viewerRole;
@@ -24,10 +26,16 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
   const [countering, setCountering] = useState<Offer | null>(null);
   const [draft, setDraft] = useState<Draft>(draftFrom(undefined, v.neededBy));
 
+  const renewTried = useRef(false);
   // Auto-release check when the inspection window has passed.
   useEffect(() => {
     if (v.status === "shipped" && v.delivery && Date.parse(v.delivery.inspectionEndsAt) <= Date.now()) act("tick");
-  }, [v.status, v.delivery, act]);
+    // PayPal's 3-day honor period ran out: the server renews the hold.
+    else if (!renewTried.current && v.status === "open" && !v.sample && v.paypal.authorizedAt && Date.now() - Date.parse(v.paypal.authorizedAt) > HONOR_MS) {
+      renewTried.current = true; // once per visit, even if PayPal refuses
+      act("tick");
+    }
+  }, [v.status, v.delivery, v.sample, v.paypal.authorizedAt, act]);
 
   const latest = thread?.offers.at(-1);
   const sellerCanOffer = me === "seller" && canSell && v.canOffer && v.status === "open" && (!latest || latest.status !== "open" || latest.by === "buyer");
@@ -90,6 +98,12 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
           <div>
             <div className="text-[11px] uppercase tracking-wider text-dim">{v.status === "draft" ? "Max price" : "PayPal holding"}</div>
             <div className="num text-2xl font-semibold">{usd(v.paypal.capturedCents ?? v.budgetCents)}</div>
+            {v.status === "open" && v.paypal.authorizedAt && (
+              <div className="text-[11px] text-dim">
+                guaranteed to {new Date(Date.parse(v.paypal.authorizedAt) + HONOR_MS).toISOString().slice(0, 10)}
+                {v.paypal.reauthorizations ? ` · renewed ${v.paypal.reauthorizations}×` : " · auto-renews"}
+              </div>
+            )}
           </div>
         </Card>
       </div>

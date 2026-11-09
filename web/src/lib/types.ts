@@ -132,7 +132,7 @@ export type WantRequest = {
   buyerTargetCents?: number;
   threads: Thread[];
   agreement?: Agreement;
-  delivery?: { note: string; tracking: string; at: string; inspectionEndsAt: string };
+  delivery?: { note: string; tracking: string; carrier?: string; paypalTracker?: string; at: string; inspectionEndsAt: string };
   dispute?: Dispute;
   reviews: Review[];
   events: { at: string; text: string; kind: "info" | "money" | "warn" }[];
@@ -140,6 +140,11 @@ export type WantRequest = {
     orderId?: string;
     authorizationId?: string;
     authorizationExpires?: string;
+    /** When the current authorization was placed: PayPal guarantees the funds for 3 days from here. */
+    authorizedAt?: string;
+    reauthorizations?: number;
+    /** First authorization time: PayPal allows renewing the hold until 29 days after this. */
+    heldSince?: string;
     captureId?: string;
     capturedCents?: number;
     refunds: { id: string; cents: number; status: string }[];

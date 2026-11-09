@@ -2,6 +2,7 @@
 // calls PayPal (or simulates it for sample deals, and says so), and appends to the money trail.
 import "server-only";
 import { canServe, reachShort } from "./domain/location";
+import { addTracking, CARRIERS, reauthorize, type Carrier } from "./paypal";
 import { authorizeOrder, captureAuthorization, createAuthorizeOrder, payoutSeller, refundCapture, voidAuthorization } from "./paypal";
 import { Conflict, Forbidden, NotFound, getRequest, id, log, mutate, nowIso, read, sha256 } from "./store";
 import { canonical, diffTerms, summarizeDiff, validateTerms, type Terms } from "./domain/offers";
@@ -101,6 +102,7 @@ export async function confirmHold(requestId: string, meId: string, b: Record<str
   return commit(requestId, (r, db) => {
     r.paypal.orderId = orderId;
     r.paypal.authorizationId = auth.authorizationId;
+    r.paypal.authorizedAt = r.paypal.heldSince = nowIso();
     r.paypal.authorizationExpires = auth.expires;
     r.status = "open";
     r.matches = matched;
@@ -115,6 +117,40 @@ export async function confirmHold(requestId: string, meId: string, b: Record<str
     for (const m of matched) await mail(requestId, m.sellerId, `New match: ${c.r.title}`, `A buyer needs "${c.r.title}" and PayPal is holding ${usd(c.r.budgetCents)} for it. Copilot matched you (${m.score}/100): ${m.reason} Send an offer in the deal room.`);
     return out;
   });
+}
+
+const HONOR_MS = 3 * 24 * HOUR;
+const VALID_MS = 29 * 24 * HOUR;
+
+/**
+ * PayPal guarantees held funds for a 3-day honor period; the authorization itself is valid 29 days.
+ * Past the honor period, renew it so the capture is guaranteed again. Returns the authorization id to use.
+ */
+async function freshHold(requestId: string): Promise<string | undefined> {
+  const r = getRequest(await read(), requestId);
+  const p = r.paypal;
+  if (r.sample || !p.authorizationId || !p.authorizedAt || p.captureId) return p.authorizationId;
+  if (Date.now() - Date.parse(p.authorizedAt) <= HONOR_MS) return p.authorizationId;
+  if (Date.now() - Date.parse(p.heldSince ?? p.authorizedAt) >= VALID_MS) return p.authorizationId;
+  const oldId = p.authorizationId;
+  try {
+    const re = await reauthorize(oldId, r.budgetCents);
+    await commit(requestId, (x) => {
+      if (x.paypal.authorizationId !== oldId) return; // someone else renewed it first
+      x.paypal.authorizationId = re.authorizationId;
+      x.paypal.authorizationExpires = re.expires ?? x.paypal.authorizationExpires;
+      x.paypal.authorizedAt = nowIso();
+      x.paypal.reauthorizations = (x.paypal.reauthorizations ?? 0) + 1;
+      log(x, `PayPal hold renewed after the 3-day honor period (new authorization ${re.authorizationId}). Funds are guaranteed again.`, "money");
+    });
+    return re.authorizationId;
+  } catch (e) {
+    console.warn("[reauthorize]", (e as Error).message);
+    await commit(requestId, (x) => {
+      if (!x.events.some((ev) => ev.text.startsWith("Couldn't renew the PayPal hold") && ev.at > x.paypal.authorizedAt!)) log(x, `Couldn't renew the PayPal hold (${(e as Error).message.slice(0, 120)}). Capture will still be attempted.`, "warn");
+    });
+    return oldId;
+  }
 }
 
 // ---------- Negotiation ----------
@@ -213,7 +249,8 @@ export async function acceptOffer(requestId: string, meId: string, b: Record<str
   let captureStatus = "COMPLETED";
   if (!c.r.sample) {
     if (!c.r.paypal.authorizationId) throw new Conflict("no PayPal hold on this request");
-    const cap = await captureAuthorization(c.r.paypal.authorizationId, o.terms.priceCents, c.r.id);
+    const authId = (await freshHold(requestId)) ?? c.r.paypal.authorizationId;
+    const cap = await captureAuthorization(authId, o.terms.priceCents, c.r.id);
     captureId = cap.captureId;
     captureStatus = cap.status;
   }
@@ -286,11 +323,25 @@ export function ship(requestId: string, meId: string, b: Record<string, unknown>
     if (t.sellerId !== meId) throw new Forbidden("only the seller can mark this shipped");
     const days = r.agreement!.terms.inspectionDays;
     const ends = new Date(Date.now() + days * 24 * HOUR).toISOString();
-    r.delivery = { note: String(b.note ?? "").slice(0, 500), tracking: String(b.tracking ?? "").slice(0, 80), at: nowIso(), inspectionEndsAt: ends };
+    const carrier = (CARRIERS as readonly string[]).includes(String(b.carrier)) ? String(b.carrier) : guessCarrier(String(b.tracking ?? ""));
+    r.delivery = { note: String(b.note ?? "").slice(0, 500), tracking: String(b.tracking ?? "").replace(/\s+/g, "").slice(0, 40), carrier, at: nowIso(), inspectionEndsAt: ends };
     r.status = "shipped";
     log(r, `Seller submitted delivery${r.delivery.tracking ? ` (tracking ${r.delivery.tracking})` : ""}. Buyer has ${days} day${days === 1 ? "" : "s"} to inspect; payment releases automatically after that.`);
-    return { status: r.status, buyer: r.buyerId, title: r.title, days, tracking: r.delivery.tracking };
+    return { status: r.status, buyer: r.buyerId, title: r.title, days, tracking: r.delivery.tracking, carrier, orderId: r.paypal.orderId, captureId: r.paypal.captureId, sample: r.sample };
   }).then(async (x) => {
+    // Push tracking to PayPal: shows in the buyer's PayPal activity and backs seller protection.
+    if (!x.sample && x.tracking && x.orderId && x.captureId) {
+      try {
+        const t = await addTracking(x.orderId, x.captureId, x.tracking, x.carrier as Carrier, x.carrier === "OTHER" ? "Other" : undefined);
+        await commit(requestId, (r) => {
+          if (r.delivery) r.delivery.paypalTracker = t.trackerId;
+          log(r, `Tracking ${x.carrier} ${x.tracking} added to the PayPal order (${t.status}). PayPal shows it to the buyer.`, "money");
+        });
+      } catch (e) {
+        console.warn("[tracking]", (e as Error).message);
+        await commit(requestId, (r) => log(r, `Couldn't add tracking to PayPal (${(e as Error).message.slice(0, 120)}). It is still saved here.`, "warn"));
+      }
+    }
     await mail(requestId, x.buyer, `Shipped: ${x.title}`, `The seller marked your item shipped${x.tracking ? ` (tracking ${x.tracking})` : ""}. You have ${x.days} days after it arrives to accept it or open a dispute.`);
     return { status: x.status };
   });
@@ -341,6 +392,7 @@ export async function release(requestId: string, meId: string | null) {
 export async function tick(requestId: string) {
   const r = getRequest(await read(), requestId);
   if (r.status === "shipped" && r.delivery && r.delivery.inspectionEndsAt <= nowIso()) return release(requestId, null);
+  if (r.status === "open") await freshHold(requestId);
   return { status: r.status };
 }
 
@@ -456,4 +508,14 @@ export function review(requestId: string, meId: string, b: Record<string, unknow
     log(r, `${role === "buyer" ? "Buyer" : "Seller"} left a review${r.reviews.length === 2 ? "; both reviews are now public" : " (hidden until the other side reviews too)"}.`);
     return { ok: true };
   });
+}
+
+/** Best guess from the number's shape; the seller can also pick the carrier. */
+export function guessCarrier(tracking: string): string {
+  const t = tracking.replace(/\s+/g, "").toUpperCase();
+  if (/^1Z[0-9A-Z]{16}$/.test(t)) return "UPS";
+  if (/^(94|93|92|95)\d{18,20}$/.test(t) || /^[A-Z]{2}\d{9}US$/.test(t)) return "USPS";
+  if (/^\d{12}$|^\d{15}$/.test(t)) return "FEDEX";
+  if (/^\d{10}$/.test(t)) return "DHL";
+  return "OTHER";
 }

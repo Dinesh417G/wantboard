@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { PayPalButtons, PayPalScriptProvider } from "@paypal/react-paypal-js";
+import { PayPalButtons, PayPalMessages, PayPalScriptProvider } from "@paypal/react-paypal-js";
 import { CheckCircle2, Fingerprint, Gavel, Loader2, Lock, PackageCheck, Star, Timer, Truck } from "lucide-react";
 import type { RequestView } from "@/lib/dto";
 import { usd } from "@/lib/domain/money";
@@ -54,11 +54,14 @@ export function HoldPanel({ v, clientId, act, setError }: { v: RequestView; clie
           <h2 className="text-lg font-medium">Let PayPal hold {usd(v.budgetCents)}</h2>
           <p className="mt-1 text-sm text-muted">
             This is an authorization, not a charge. Sellers see “funds held by PayPal” and start bidding. When you accept an offer PayPal takes only that price and releases the rest.
-            Cancel any time before then and nothing is charged. Pay with PayPal balance, card or Pay Later.
+            Cancel any time before then and nothing is charged. Pay with PayPal balance, Venmo, card or Pay Later (Pay in 4).
           </p>
           <div className="mt-5 max-w-sm rounded-2xl bg-white p-3">
             {clientId ? (
-              <PayPalScriptProvider options={{ clientId, currency: "USD", intent: "authorize", enableFunding: "paylater", buyerCountry: "US", components: "buttons" }}>
+              <PayPalScriptProvider options={{ clientId, currency: "USD", intent: "authorize", enableFunding: "paylater,venmo", buyerCountry: "US", components: "buttons,messages" }}>
+                <div className="mb-2">
+                  <PayPalMessages amount={v.budgetCents / 100} style={{ layout: "text", logo: { type: "inline" }, text: { color: "black", size: 12 } }} />
+                </div>
                 <PayPalButtons
                   style={{ layout: "vertical", shape: "pill", color: "gold", label: "paypal" }}
                   createOrder={async () => {
@@ -130,6 +133,7 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
   const winner = v.threads.find((t) => t.id === v.agreement?.threadId);
   const isSeller = role === "seller" && !!winner;
   const [tracking, setTracking] = useState("");
+  const [carrier, setCarrier] = useState("");
   const [note, setNote] = useState("");
   const [dReason, setDReason] = useState("not_as_described");
   const [dText, setDText] = useState("");
@@ -160,17 +164,32 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
             </div>
           )}
           {isSeller ? (
-            <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-              <Field label="Tracking">
-                <Input value={tracking} onChange={(e) => setTracking(e.target.value)} placeholder="UPS 1Z…" />
-              </Field>
-              <Field label="Delivery note">
-                <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Packed with mill cert" />
-              </Field>
-              <Button disabled={!!busy} onClick={() => act("ship", { tracking, note })}>
-                {busy === "ship" ? <Loader2 className="size-4 animate-spin" /> : <PackageCheck className="size-4" />} Mark shipped
-              </Button>
-            </div>
+            <>
+              <div className="mt-4 grid gap-3 sm:grid-cols-[130px_1fr_1fr] sm:items-end">
+                <Field label="Carrier">
+                  <Select value={carrier} onChange={(e) => setCarrier(e.target.value)}>
+                    <option value="">Auto-detect</option>
+                    <option value="UPS">UPS</option>
+                    <option value="USPS">USPS</option>
+                    <option value="FEDEX">FedEx</option>
+                    <option value="DHL">DHL</option>
+                    <option value="OTHER">Other</option>
+                  </Select>
+                </Field>
+                <Field label="Tracking number">
+                  <Input value={tracking} onChange={(e) => setTracking(e.target.value)} placeholder="1Z999AA10123456784" className="font-mono" />
+                </Field>
+                <Field label="Delivery note">
+                  <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Packed with mill cert" />
+                </Field>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Button disabled={!!busy} onClick={() => act("ship", { tracking, note, carrier })}>
+                  {busy === "ship" ? <Loader2 className="size-4 animate-spin" /> : <PackageCheck className="size-4" />} Mark shipped
+                </Button>
+                <span className="text-xs text-dim">Tracking is added to the buyer&apos;s PayPal order, which supports PayPal Seller Protection.</span>
+              </div>
+            </>
           ) : (
             <p className="mt-3 text-sm text-muted">
               The seller is paid only after delivery and your inspection. Changed your mind before it ships? Cancel and PayPal refunds you in full.
@@ -200,7 +219,8 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
             {v.delivery.tracking && (
               <>
                 {" "}
-                · tracking <span className="font-mono text-fg">{v.delivery.tracking}</span>
+                · {v.delivery.carrier && v.delivery.carrier !== "OTHER" ? v.delivery.carrier : "tracking"} <span className="font-mono text-fg">{v.delivery.tracking}</span>
+                {v.delivery.paypalTracker && <Badge tone="paypal" className="ml-2">on PayPal order</Badge>}
               </>
             )}
             {v.delivery.note && <> · “{v.delivery.note}”</>}

@@ -250,3 +250,34 @@ function fromPayPalAddress(a: unknown): Address | undefined {
   const out = parseAddress({ line1, line2: rest.join(", "), city: x.locality, state: x.region, zip: x.postal_code }, { needStreet: true });
   return typeof out === "string" ? undefined : out;
 }
+
+// ---------- Keep the hold guaranteed ----------
+
+/** After the 3-day honor period, renew the hold (allowed until day 29). Returns the NEW authorization id. */
+export async function reauthorize(authorizationId: string, cents: number) {
+  const res = await call("POST", `/v2/payments/authorizations/${authorizationId}/reauthorize`, { amount: money(cents) }, `reauth-${authorizationId}`);
+  return { authorizationId: res.id as string, status: res.status as string, expires: res.expiration_time as string | undefined };
+}
+
+// ---------- Package tracking on the PayPal order ----------
+
+export const CARRIERS = ["UPS", "USPS", "FEDEX", "DHL", "OTHER"] as const;
+export type Carrier = (typeof CARRIERS)[number];
+
+/** Attach the seller's tracking number to the captured PayPal order; PayPal can notify the buyer. */
+export async function addTracking(orderId: string, captureId: string, trackingNumber: string, carrier: Carrier, carrierOther?: string) {
+  const res = await call(
+    "POST",
+    `/v2/checkout/orders/${orderId}/track`,
+    {
+      capture_id: captureId,
+      tracking_number: trackingNumber,
+      carrier,
+      ...(carrier === "OTHER" ? { carrier_name_other: (carrierOther || "Other").slice(0, 64) } : {}),
+      notify_payer: true,
+    },
+    `track-${captureId}-${trackingNumber}`,
+  );
+  const tracker = res.purchase_units?.[0]?.shipping?.trackers?.at?.(-1);
+  return { trackerId: (tracker?.id ?? `${captureId}-${trackingNumber}`) as string, status: (tracker?.status ?? "SHIPPED") as string };
+}
