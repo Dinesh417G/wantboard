@@ -2,7 +2,7 @@
 // calls PayPal (or simulates it for sample deals, and says so), and appends to the money trail.
 import "server-only";
 import { canServe, reachShort } from "./domain/location";
-import { addTracking, cancelUnclaimedPayout, CARRIERS, getPayout, reauthorize, type Carrier } from "./paypal";
+import { acceptDisputeClaim, addTracking, cancelUnclaimedPayout, CARRIERS, disputesForCapture, getDispute, getPayout, provideDisputeEvidence, reauthorize, type Carrier, type PayPalDispute } from "./paypal";
 import { authorizeOrder, captureAuthorization, createAuthorizeOrder, payoutSeller, refundCapture, voidAuthorization } from "./paypal";
 import { Conflict, Forbidden, NotFound, getRequest, id, log, mutate, nowIso, read, sha256 } from "./store";
 import { canonical, diffTerms, summarizeDiff, validateTerms, type Terms } from "./domain/offers";
@@ -447,6 +447,7 @@ export async function release(requestId: string, meId: string | null) {
   const r = c?.r ?? getRequest(await read(), requestId);
   if (c) mustBuyer(c);
   if (r.status !== "shipped") throw new Conflict("nothing to release");
+  if (hasOpenPayPalDispute(r)) throw new Conflict("a PayPal dispute is open; the payout waits until PayPal resolves it");
   if (!meId && r.delivery!.inspectionEndsAt > nowIso()) throw new Conflict("inspection window still running");
   const payout = r.paypal.payoutCents!;
   const { batch, status, seller, to } = await payOut(requestId, payout, `Price ${usd(r.paypal.capturedCents!)} minus platform fee ${usd(r.paypal.feeCents!)}.`);
@@ -465,8 +466,13 @@ export async function release(requestId: string, meId: string | null) {
 
 /** Auto-release when the inspection window has passed. Safe to call repeatedly. */
 export async function tick(requestId: string) {
-  const r = getRequest(await read(), requestId);
-  if (r.status === "shipped" && r.delivery && r.delivery.inspectionEndsAt <= nowIso()) return release(requestId, null);
+  let r = getRequest(await read(), requestId);
+  // Check PayPal first: a dispute opened there must stop the automatic payout.
+  if (["agreed", "shipped", "disputed", "completed"].includes(r.status)) {
+    await syncDisputes(requestId);
+    r = getRequest(await read(), requestId);
+  }
+  if (r.status === "shipped" && r.delivery && r.delivery.inspectionEndsAt <= nowIso() && !hasOpenPayPalDispute(r)) return release(requestId, null);
   if (r.status === "open") await freshHold(requestId);
   if (r.status === "completed") await syncPayout(requestId);
   return { status: r.status };
@@ -595,4 +601,83 @@ export function guessCarrier(tracking: string): string {
   if (/^\d{12}$|^\d{15}$/.test(t)) return "FEDEX";
   if (/^\d{10}$/.test(t)) return "DHL";
   return "OTHER";
+}
+
+// ---------- Disputes opened inside PayPal ----------
+
+const REASON: Record<string, string> = {
+  MERCHANDISE_OR_SERVICE_NOT_RECEIVED: "item not received",
+  MERCHANDISE_OR_SERVICE_NOT_AS_DESCRIBED: "item not as described",
+  UNAUTHORISED: "unauthorized payment",
+  CREDIT_NOT_PROCESSED: "refund not processed",
+  DUPLICATE_TRANSACTION: "duplicate payment",
+  INCORRECT_AMOUNT: "incorrect amount",
+};
+export const disputeReason = (r: string) => REASON[r] ?? r.toLowerCase().replace(/_/g, " ");
+
+/** Store the latest PayPal dispute state; tell both sides and support when it opens or resolves. */
+export async function applyPayPalDispute(requestId: string, d: PayPalDispute) {
+  const out = await commit(requestId, (r) => {
+    const prev = r.paypal.dispute;
+    r.paypal.disputeCheckedAt = nowIso();
+    if (prev && prev.status === d.status && prev.updatedAt === d.updatedAt) return null;
+    r.paypal.dispute = { ...prev, ...d };
+    const what = `PayPal dispute ${d.id} (${disputeReason(d.reason)}, ${usd(d.amountCents)}, ${d.stage.toLowerCase()})`;
+    if (!prev) log(r, `Buyer opened ${what} in PayPal. Seller payout is paused until it's resolved.`, "warn");
+    else if (d.status === "RESOLVED") log(r, `${what} resolved${d.outcome ? `: ${d.outcome.toLowerCase().replace(/_/g, " ")}` : ""}.`, "money");
+    else log(r, `${what} is now ${d.status.toLowerCase().replace(/_/g, " ")}.`, "warn");
+    return { opened: !prev, resolved: d.status === "RESOLVED" && prev?.status !== "RESOLVED", buyer: r.buyerId, seller: r.agreement ? winningThread(r).sellerId : undefined, title: r.title };
+  });
+  if (!out || (!out.opened && !out.resolved)) return;
+  const subject = out.opened ? `PayPal dispute opened: ${out.title}` : `PayPal dispute resolved: ${out.title}`;
+  const text = out.opened
+    ? `A PayPal dispute was opened (${disputeReason(d.reason)}, ${usd(d.amountCents)}). The seller payout is paused. Respond from the deal room${d.respondBy ? ` by ${d.respondBy.slice(0, 10)}` : ""}.`
+    : `PayPal resolved the dispute${d.outcome ? ` (${d.outcome.toLowerCase().replace(/_/g, " ")})` : ""}.`;
+  if (out.seller) await mail(requestId, out.seller, subject, text);
+  await mail(requestId, out.buyer, subject, text);
+  adminAlert(subject, { Request: requestId, Dispute: d.id, Reason: disputeReason(d.reason), Amount: usd(d.amountCents), Status: d.status }, `${siteUrl()}/r/${requestId}`);
+}
+
+/** Look up PayPal disputes for this deal's capture (no webhook needed). Throttled to once every 5 minutes. */
+async function syncDisputes(requestId: string) {
+  const r = getRequest(await read(), requestId);
+  const p = r.paypal;
+  if (r.sample || !p.captureId || p.captureId === "SIMULATED") return;
+  if (p.dispute?.status === "RESOLVED") return;
+  if (p.disputeCheckedAt && Date.now() - Date.parse(p.disputeCheckedAt) < 5 * 60_000) return;
+  try {
+    const ids = p.dispute ? [p.dispute.id] : await disputesForCapture(p.captureId);
+    if (!ids.length) return void (await commit(requestId, (x) => void (x.paypal.disputeCheckedAt = nowIso())));
+    await applyPayPalDispute(requestId, await getDispute(ids[0]));
+  } catch (e) {
+    console.warn("[dispute-sync]", (e as Error).message);
+  }
+}
+
+export const hasOpenPayPalDispute = (r: WantRequest) => !!r.paypal.dispute && r.paypal.dispute.status !== "RESOLVED";
+
+/** Seller answers a PayPal dispute: send tracking/proof, or accept the claim (PayPal refunds the buyer). */
+export async function respondPayPalDispute(requestId: string, meId: string, b: Record<string, unknown>) {
+  const r = getRequest(await read(), requestId);
+  const d = r.paypal.dispute;
+  if (!d || d.status === "RESOLVED") throw new Conflict("no open PayPal dispute");
+  if (!r.agreement || winningThread(r).sellerId !== meId) throw new Forbidden("only the seller can answer the PayPal dispute");
+  const note = String(b.note ?? "").trim().slice(0, 2000);
+  if (b.choice === "accept") {
+    await acceptDisputeClaim(d.id, note || "Seller accepts the claim and agrees to refund the buyer.");
+    await commit(requestId, (x) => {
+      x.paypal.dispute!.acceptedAt = nowIso();
+      log(x, `Seller accepted the PayPal claim. PayPal refunds the buyer ${usd(d.amountCents)}.`, "money");
+    });
+  } else {
+    if (note.length < 10) throw new BadInput("Explain what happened (at least a sentence)");
+    const tracking = r.delivery?.tracking ? { carrier: r.delivery.carrier && r.delivery.carrier !== "OTHER" ? r.delivery.carrier : "OTHER", number: r.delivery.tracking } : undefined;
+    await provideDisputeEvidence(d.id, note, tracking);
+    await commit(requestId, (x) => {
+      x.paypal.dispute!.evidenceSentAt = nowIso();
+      log(x, `Seller sent PayPal ${tracking ? `proof of shipment (${tracking.carrier} ${tracking.number}) and ` : ""}a statement for dispute ${d.id}.`, "money");
+    });
+  }
+  await commit(requestId, (x) => void (x.paypal.disputeCheckedAt = undefined)); // re-check soon
+  return { status: r.status };
 }

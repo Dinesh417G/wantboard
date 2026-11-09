@@ -27,18 +27,17 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
   const [draft, setDraft] = useState<Draft>(draftFrom(undefined, v.neededBy));
 
   const renewTried = useRef(false);
-  // Auto-release check when the inspection window has passed.
+  // Once per visit, let the server catch up with PayPal: renew an old hold, check payout status and PayPal disputes,
+  // and auto-release after the inspection window. The server throttles each PayPal check.
   useEffect(() => {
-    if (v.status === "shipped" && v.delivery && Date.parse(v.delivery.inspectionEndsAt) <= Date.now()) act("tick");
-    // PayPal's 3-day honor period ran out: the server renews the hold.
-    else if (!renewTried.current && v.status === "open" && !v.sample && v.paypal.authorizedAt && Date.now() - Date.parse(v.paypal.authorizedAt) > HONOR_MS) {
-      renewTried.current = true; // once per visit, even if PayPal refuses
-      act("tick");
-    } else if (!renewTried.current && v.status === "completed" && !v.sample && v.paypal.payoutBatchId && !["SUCCESS", "FAILED", "UNCLAIMED", "RETURNED", "BLOCKED", "DENIED", "REFUNDED", "REVERSED"].includes(v.paypal.payoutStatus ?? "")) {
-      renewTried.current = true; // ask PayPal for the payout status once per visit
-      act("tick");
-    }
-  }, [v.status, v.delivery, v.sample, v.paypal.authorizedAt, v.paypal.payoutBatchId, v.paypal.payoutStatus, act]);
+    if (renewTried.current || v.sample) return;
+    const needs =
+      (v.status === "open" && !!v.paypal.authorizedAt && Date.now() - Date.parse(v.paypal.authorizedAt) > HONOR_MS) ||
+      (["agreed", "shipped", "disputed", "completed"].includes(v.status) && !!v.paypal.captureId);
+    if (!needs) return;
+    renewTried.current = true;
+    act("tick");
+  }, [v.status, v.sample, v.paypal.authorizedAt, v.paypal.captureId, act]);
 
   const latest = thread?.offers.at(-1);
   const sellerCanOffer = me === "seller" && canSell && v.canOffer && v.status === "open" && (!latest || latest.status !== "open" || latest.by === "buyer");

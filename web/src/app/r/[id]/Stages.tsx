@@ -2,13 +2,19 @@
 
 import { useState } from "react";
 import { PayPalButtons, PayPalMessages, PayPalScriptProvider } from "@paypal/react-paypal-js";
-import { CheckCircle2, Fingerprint, Gavel, Loader2, Lock, PackageCheck, Star, Timer, Truck } from "lucide-react";
+import { CheckCircle2, Fingerprint, Gavel, Loader2, Lock, PackageCheck, ShieldAlert, Star, Timer, Truck } from "lucide-react";
 import type { RequestView } from "@/lib/dto";
 import { usd } from "@/lib/domain/money";
 import { Badge, Button, Card, Field, Input, Select, Textarea, cn } from "@/components/ui";
 import { left, useNow } from "./hooks";
 
 type Act = (action: string, payload?: unknown) => Promise<unknown>;
+
+const REASON: Record<string, string> = {
+  MERCHANDISE_OR_SERVICE_NOT_RECEIVED: "item not received",
+  MERCHANDISE_OR_SERVICE_NOT_AS_DESCRIBED: "not as described",
+  UNAUTHORISED: "unauthorized payment",
+};
 
 const PROBLEM = new Set(["FAILED", "UNCLAIMED", "RETURNED", "BLOCKED", "REFUNDED", "REVERSED", "DENIED"]);
 
@@ -145,8 +151,42 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
   const ends = v.delivery ? Date.parse(v.delivery.inspectionEndsAt) : 0;
   const remaining = now === null ? null : ends - now;
 
+  const ppd = v.paypal.dispute;
   return (
     <div className="space-y-4">
+      {ppd && (role === "buyer" || isSeller) && (
+        <Card className={cn("p-6", ppd.status === "RESOLVED" ? "" : "border-rose/40")}>
+          <div className="flex flex-wrap items-center gap-3">
+            <ShieldAlert className={cn("size-5", ppd.status === "RESOLVED" ? "text-mint" : "text-rose")} />
+            <h3 className="font-medium">PayPal dispute · {REASON[ppd.reason] ?? ppd.reason.toLowerCase().replace(/_/g, " ")}</h3>
+            <Badge tone={ppd.status === "RESOLVED" ? "mint" : "rose"} className="ml-auto">
+              {ppd.status.toLowerCase().replace(/_/g, " ")}
+            </Badge>
+          </div>
+          <p className="mt-2 text-sm text-muted">
+            Opened in PayPal on {ppd.createdAt.slice(0, 10)} for <span className="num text-fg">{usd(ppd.amountCents)}</span> · stage {ppd.stage.toLowerCase()}
+            {ppd.respondBy && ppd.status !== "RESOLVED" ? ` · seller must respond by ${ppd.respondBy.slice(0, 10)}` : ""}
+            {ppd.outcome ? ` · outcome: ${ppd.outcome.toLowerCase().replace(/_/g, " ")}` : ""}. Dispute ID <span className="font-mono">{ppd.id}</span>.
+          </p>
+          {ppd.buyerMessage && <p className="mt-2 rounded-xl border border-line bg-white/[0.03] p-3 text-sm">“{ppd.buyerMessage}”</p>}
+          {ppd.status !== "RESOLVED" && <p className="mt-2 text-xs text-dim">The seller payout is paused until PayPal resolves this.</p>}
+          {isSeller && ppd.status !== "RESOLVED" && !ppd.acceptedAt && (
+            <div className="mt-4 space-y-3 border-t border-line pt-4">
+              <Textarea rows={3} value={dText} onChange={(e) => setDText(e.target.value)} placeholder="Your side: what you shipped, when, and any conversation with the buyer…" />
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" disabled={!!busy || dText.trim().length < 10} onClick={() => act("paypal-dispute", { choice: "evidence", note: dText })}>
+                  {busy === "paypal-dispute" ? <Loader2 className="size-4 animate-spin" /> : null} Send to PayPal{v.delivery?.tracking ? " with tracking" : ""}
+                </Button>
+                <Button size="sm" variant="danger" disabled={!!busy} onClick={() => act("paypal-dispute", { choice: "accept", note: dText })}>
+                  Accept claim &amp; refund
+                </Button>
+              </div>
+              {ppd.evidenceSentAt && <p className="text-xs text-mint">Evidence sent {ppd.evidenceSentAt.slice(0, 16).replace("T", " ")} UTC. PayPal reviews it.</p>}
+            </div>
+          )}
+          {ppd.acceptedAt && <p className="mt-3 text-sm text-muted">Seller accepted the claim; PayPal refunds the buyer.</p>}
+        </Card>
+      )}
       {v.status === "agreed" && (
         <Card className="p-6">
           <div className="flex items-center gap-3">

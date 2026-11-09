@@ -157,6 +157,22 @@ export type WantRequest = {
     payoutAttempts?: number;
     payoutCheckedAt?: string;
     payoutTo?: string;
+    /** A dispute the buyer opened inside PayPal (separate from Clinch's own dispute flow). */
+    dispute?: {
+      id: string;
+      status: string;
+      reason: string;
+      stage: string;
+      amountCents: number;
+      createdAt: string;
+      updatedAt: string;
+      respondBy?: string;
+      outcome?: string;
+      buyerMessage?: string;
+      evidenceSentAt?: string;
+      acceptedAt?: string;
+    };
+    disputeCheckedAt?: string;
     payoutCents?: number;
     feeCents?: number;
   };

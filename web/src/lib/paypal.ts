@@ -309,3 +309,81 @@ export async function getPayout(batchId: string) {
 export function cancelUnclaimedPayout(itemId: string) {
   return call("POST", `/v1/payments/payouts-item/${itemId}/cancel`);
 }
+
+// ---------- Customer disputes (opened by the buyer in PayPal) ----------
+
+export type PayPalDispute = {
+  id: string;
+  status: string; // OPEN, WAITING_FOR_SELLER_RESPONSE, WAITING_FOR_BUYER_RESPONSE, UNDER_REVIEW, RESOLVED, OTHER
+  reason: string; // MERCHANDISE_OR_SERVICE_NOT_RECEIVED, MERCHANDISE_OR_SERVICE_NOT_AS_DESCRIBED, UNAUTHORISED, ...
+  stage: string; // INQUIRY, CHARGEBACK, PRE_ARBITRATION, ARBITRATION
+  amountCents: number;
+  createdAt: string;
+  updatedAt: string;
+  respondBy?: string;
+  outcome?: string;
+  buyerMessage?: string;
+};
+
+const toCents = (v: unknown) => Math.round(Number(v ?? 0) * 100);
+
+/** Disputes PayPal has on file for one capture (normally zero or one). */
+export async function disputesForCapture(captureId: string): Promise<string[]> {
+  const res = await call("GET", `/v1/customer/disputes?disputed_transaction_id=${encodeURIComponent(captureId)}&page_size=10`);
+  return ((res.items ?? []) as { dispute_id: string }[]).map((d) => d.dispute_id);
+}
+
+export async function getDispute(id: string): Promise<PayPalDispute> {
+  const d = await call("GET", `/v1/customer/disputes/${id}`);
+  const fromBuyer = ((d.messages ?? []) as { posted_by: string; content: string }[]).find((m) => m.posted_by === "BUYER");
+  return {
+    id: d.dispute_id,
+    status: d.status,
+    reason: d.reason,
+    stage: d.dispute_life_cycle_stage,
+    amountCents: toCents(d.dispute_amount?.value),
+    createdAt: d.create_time,
+    updatedAt: d.update_time,
+    respondBy: d.seller_response_due_date,
+    outcome: d.dispute_outcome?.outcome_code,
+    buyerMessage: fromBuyer?.content?.slice(0, 500),
+  };
+}
+
+/** Which capture a dispute is about (from a webhook resource or the dispute itself). */
+export function disputedCaptureIds(resource: Record<string, unknown>): string[] {
+  const list = (resource.disputed_transactions ?? []) as { seller_transaction_id?: string }[];
+  return list.map((t) => t.seller_transaction_id).filter((x): x is string => !!x);
+}
+
+async function multipart(path: string, input: unknown) {
+  const form = new FormData();
+  form.append("input", new Blob([JSON.stringify(input)], { type: "application/json" }), "input.json");
+  const res = await fetch(`${BASE}${path}`, { method: "POST", headers: { Authorization: `Bearer ${await token()}` }, body: form, cache: "no-store" });
+  const text = await res.text();
+  const json = text ? JSON.parse(text) : {};
+  if (!res.ok) throw new PayPalError(res.status, json, `PayPal POST ${path} failed: ${res.status} ${json?.details?.[0]?.issue ?? json?.name ?? ""} ${json?.message ?? ""}`.trim());
+  return json;
+}
+
+/** Seller's side: proof of shipment (tracking) plus a note. */
+export function provideDisputeEvidence(id: string, note: string, tracking?: { carrier: string; number: string }) {
+  return multipart(`/v1/customer/disputes/${id}/provide-evidence`, {
+    evidences: [
+      {
+        evidence_type: tracking ? "PROOF_OF_FULFILLMENT" : "OTHER",
+        ...(tracking ? { evidence_info: { tracking_info: [{ carrier_name: tracking.carrier === "FEDEX" ? "FEDEX" : tracking.carrier, tracking_number: tracking.number }] } } : {}),
+        notes: note.slice(0, 2000),
+      },
+    ],
+  });
+}
+
+/** Seller agrees with the buyer: PayPal refunds the disputed amount. */
+export function acceptDisputeClaim(id: string, note: string) {
+  return call("POST", `/v1/customer/disputes/${id}/accept-claim`, { note: note.slice(0, 2000) }, `accept-${id}`);
+}
+
+export function sendDisputeMessage(id: string, message: string) {
+  return multipart(`/v1/customer/disputes/${id}/send-message`, { message: message.slice(0, 2000) });
+}

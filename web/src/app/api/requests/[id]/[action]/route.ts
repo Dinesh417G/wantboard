@@ -43,6 +43,8 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
       return E.cancel(id, me);
     case "review":
       return E.review(id, me, b);
+    case "paypal-dispute":
+      return E.respondPayPalDispute(id, me, b);
     case "retry-payout":
       return E.retryPayout(id, me);
     default:
