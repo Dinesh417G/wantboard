@@ -21,7 +21,7 @@ function fields(b: Record<string, unknown>) {
   if (name.length < 2) return { error: "Enter your name or shop name" };
   if (city.length < 2) return { error: "Enter your city and state" };
   if (paypalEmail && !validEmail(paypalEmail)) return { error: "PayPal email doesn't look right" };
-  if (role === "seller" && !paypalEmail && !b.paypalLinked) return { error: "Sellers need a PayPal email to get paid" };
+  if (role === "seller" && !paypalEmail && !b.paypalLinked && b.payoutMethod !== "venmo") return { error: "Sellers need a PayPal email to get paid" };
   if (role === "seller" && !categories.length) return { error: "Pick at least one category you sell in" };
   // Address is optional here (buyers are asked again when they post); if any part is filled in, it must be valid.
   const raw = (b.address ?? {}) as Record<string, unknown>;
@@ -31,7 +31,13 @@ function fields(b: Record<string, unknown>) {
     if (typeof a === "string") return { error: a };
     address = a;
   }
-  return { name, city, bio, role, paypalEmail, categories, address } as const;
+  // Payouts: PayPal (default) or Venmo (US) by phone, email or @handle.
+  const method: "paypal" | "venmo" = b.payoutMethod === "venmo" ? "venmo" : "paypal";
+  const venmo = s(b.venmo, 60);
+  if (method === "venmo" && !(/^@?[A-Za-z0-9_-]{5,30}$/.test(venmo) || /^\+?1?[\s().-]*\d{3}[\s().-]*\d{3}[\s.-]*\d{4}$/.test(venmo) || validEmail(normalizeEmail(venmo))))
+    return { error: "Enter your Venmo phone number, email or @username" };
+  const payout: { method: "paypal" | "venmo"; venmo?: string } = method === "venmo" ? { method, venmo } : { method };
+  return { name, city, bio, role, paypalEmail, categories, address, payout } as const;
 }
 
 async function uniqueHandle(base: string): Promise<string> {

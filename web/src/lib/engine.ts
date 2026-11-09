@@ -2,7 +2,7 @@
 // calls PayPal (or simulates it for sample deals, and says so), and appends to the money trail.
 import "server-only";
 import { canServe, reachShort } from "./domain/location";
-import { addTracking, CARRIERS, reauthorize, type Carrier } from "./paypal";
+import { addTracking, cancelUnclaimedPayout, CARRIERS, getPayout, reauthorize, type Carrier } from "./paypal";
 import { authorizeOrder, captureAuthorization, createAuthorizeOrder, payoutSeller, refundCapture, voidAuthorization } from "./paypal";
 import { Conflict, Forbidden, NotFound, getRequest, id, log, mutate, nowIso, read, sha256 } from "./store";
 import { canonical, diffTerms, summarizeDiff, validateTerms, type Terms } from "./domain/offers";
@@ -354,18 +354,92 @@ async function payOut(requestId: string, payoutCents: number, why: string) {
   const seller = db.parties.find((p) => p.id === t.sellerId)!;
   let batch = "SIMULATED";
   let status = "SUCCESS";
+  const venmo = seller.payout?.method === "venmo" ? seller.payout.venmo : undefined;
+  let to = venmo ? `Venmo ${venmo}` : seller.paypal ? `PayPal (connected account)` : `PayPal ${seller.paypalEmail}`;
   if (!r.sample && payoutCents > 0) {
-    const out = await payoutSeller({
-      batchKey: `payout-${r.id}`,
-      email: seller.paypalEmail,
-      payerId: seller.paypal?.payerId,
-      cents: payoutCents,
-      note: `Clinch: "${r.title}". ${why}`,
-    });
+    const attempt = r.paypal.payoutAttempts ?? 0;
+    const key = attempt ? `payout-${r.id}-${attempt + 1}` : `payout-${r.id}`;
+    const base = { email: seller.paypalEmail, payerId: seller.paypal?.payerId, cents: payoutCents, note: `Clinch: "${r.title}". ${why}` };
+    let out;
+    try {
+      out = await payoutSeller({ ...base, batchKey: key, venmo });
+    } catch (e) {
+      // PayPal's sandbox rejects every Venmo payout ("Recipient wallet not supported in sandbox"); live Venmo works.
+      if (!venmo || !/not supported in sandbox/i.test((e as Error).message + JSON.stringify((e as { details?: unknown }).details ?? ""))) throw e;
+      if (!seller.paypal && !seller.paypalEmail) throw e;
+      out = await payoutSeller({ ...base, batchKey: `${key}-pp` });
+      to = `${seller.paypal ? "PayPal (connected account)" : `PayPal ${seller.paypalEmail}`} (sandbox can't pay Venmo; live payouts go to Venmo ${venmo})`;
+    }
     batch = out.payoutBatchId;
     status = out.status;
   }
-  return { batch, status, seller };
+  return { batch, status, seller, to };
+}
+
+const PAYOUT_PROBLEM = new Set(["FAILED", "UNCLAIMED", "RETURNED", "BLOCKED", "REFUNDED", "REVERSED", "DENIED"]);
+const PAYOUT_FINAL = new Set(["SUCCESS", ...PAYOUT_PROBLEM]);
+const PAYOUT_HELP: Record<string, string> = {
+  UNCLAIMED: "the receiving PayPal/Venmo account doesn't exist yet or isn't confirmed. Fix it in Settings and retry, or claim it within 30 days.",
+  FAILED: "PayPal couldn't deliver it. Check the payout account in Settings and retry.",
+  RETURNED: "the money came back unclaimed. Check the payout account in Settings and retry.",
+  BLOCKED: "PayPal blocked it for review. Contact Clinch support.",
+  DENIED: "PayPal denied it. Contact Clinch support.",
+  REFUNDED: "it was refunded to Clinch. Retry from the deal room.",
+  REVERSED: "it was reversed. Contact Clinch support.",
+};
+
+/** Record a payout item status (from a webhook or a status check) and alert people when it needs action. */
+export async function applyPayoutStatus(requestId: string, status: string, itemId?: string, error?: string) {
+  const out = await commit(requestId, (r) => {
+    r.paypal.payoutCheckedAt = nowIso();
+    if (itemId) r.paypal.payoutItemId = itemId;
+    if (r.paypal.payoutStatus === status) return null;
+    r.paypal.payoutStatus = status;
+    const seller = winningThread(r).sellerId;
+    if (status === "SUCCESS") log(r, `PayPal confirmed the payout reached the seller (item ${itemId ?? r.paypal.payoutItemId ?? "?"}).`, "money");
+    else if (PAYOUT_PROBLEM.has(status)) log(r, `Payout ${status.toLowerCase()}: ${PAYOUT_HELP[status] ?? ""}${error ? ` (${error})` : ""}`, "warn");
+    else log(r, `Payout status: ${status}.`, "money");
+    return { seller, title: r.title, problem: PAYOUT_PROBLEM.has(status) };
+  });
+  if (out?.problem) {
+    await mail(requestId, out.seller, `Action needed: payout ${status.toLowerCase()} for "${out.title}"`, `Your Clinch payout is ${status.toLowerCase()}: ${PAYOUT_HELP[status] ?? ""} Open the deal room to retry.`);
+    adminAlert(`Payout ${status}: ${out.title}`, { Request: requestId, Status: status, Error: error }, `${siteUrl()}/r/${requestId}`);
+  }
+}
+
+/** Ask PayPal for the payout status (works even without webhooks). Throttled to once every 2 minutes. */
+async function syncPayout(requestId: string) {
+  const r = getRequest(await read(), requestId);
+  const p = r.paypal;
+  if (r.sample || !p.payoutBatchId || p.payoutBatchId === "SIMULATED" || (p.payoutStatus && PAYOUT_FINAL.has(p.payoutStatus))) return;
+  if (p.payoutCheckedAt && Date.now() - Date.parse(p.payoutCheckedAt) < 2 * 60_000) return;
+  try {
+    const st = await getPayout(p.payoutBatchId);
+    await applyPayoutStatus(requestId, st.status, st.itemId, st.error);
+  } catch (e) {
+    console.warn("[payout-sync]", (e as Error).message);
+  }
+}
+
+/** Seller fixed their payout account: send the payout again (taking back an unclaimed one first). */
+export async function retryPayout(requestId: string, meId: string) {
+  const r = getRequest(await read(), requestId);
+  if (r.status !== "completed" || !r.paypal.payoutCents) throw new Conflict("nothing to pay out");
+  if (winningThread(r).sellerId !== meId && r.buyerId !== meId) throw new Forbidden("not your deal");
+  const st = r.paypal.payoutStatus ?? "";
+  if (!PAYOUT_PROBLEM.has(st) || ["BLOCKED", "DENIED", "REVERSED"].includes(st)) throw new Conflict(st === "SUCCESS" ? "the payout already arrived" : "this payout can't be retried here; contact support");
+  if (st === "UNCLAIMED" && r.paypal.payoutItemId) await cancelUnclaimedPayout(r.paypal.payoutItemId);
+  const { batch, status, to } = await payOut(requestId, r.paypal.payoutCents, `Payout retry. Price ${usd(r.paypal.capturedCents ?? 0)} minus platform fee ${usd(r.paypal.feeCents ?? 0)}.`);
+  return commit(requestId, (x) => {
+    x.paypal.payoutAttempts = (x.paypal.payoutAttempts ?? 0) + 1;
+    x.paypal.payoutBatchId = batch;
+    x.paypal.payoutStatus = undefined;
+    x.paypal.payoutItemId = undefined;
+    x.paypal.payoutCheckedAt = undefined;
+    x.paypal.payoutTo = to;
+    log(x, `Payout sent again to ${to} (batch ${batch}, ${status}).`, "money");
+    return { status: x.status };
+  });
 }
 
 export async function release(requestId: string, meId: string | null) {
@@ -375,15 +449,16 @@ export async function release(requestId: string, meId: string | null) {
   if (r.status !== "shipped") throw new Conflict("nothing to release");
   if (!meId && r.delivery!.inspectionEndsAt > nowIso()) throw new Conflict("inspection window still running");
   const payout = r.paypal.payoutCents!;
-  const { batch, status, seller } = await payOut(requestId, payout, `Price ${usd(r.paypal.capturedCents!)} minus platform fee ${usd(r.paypal.feeCents!)}.`);
+  const { batch, status, seller, to } = await payOut(requestId, payout, `Price ${usd(r.paypal.capturedCents!)} minus platform fee ${usd(r.paypal.feeCents!)}.`);
   return commit(requestId, (x) => {
+    x.paypal.payoutTo = to;
     x.paypal.payoutBatchId = batch;
     x.status = "completed";
     log(x, meId ? "Buyer accepted the delivery." : "Inspection window ended with no dispute: auto-accepted.");
-    log(x, `PayPal Payouts sent ${usd(payout)} to ${seller.name} (batch ${batch}, ${status})${x.sample ? " (simulated)" : ""}; platform fee ${usd(x.paypal.feeCents!)}.`, "money");
+    log(x, `PayPal Payouts sent ${usd(payout)} to ${seller.name} via ${to} (batch ${batch}, ${status})${x.sample ? " (simulated)" : ""}; platform fee ${usd(x.paypal.feeCents!)}.`, "money");
     return { status: x.status };
   }).then(async (out) => {
-    await mail(requestId, seller.id, `You've been paid: ${r.title}`, `PayPal Payouts sent ${usd(payout)} to your PayPal account. Leave a review for the buyer in the deal room.`);
+    await mail(requestId, seller.id, `You've been paid: ${r.title}`, `PayPal Payouts sent ${usd(payout)} to your ${to}. Leave a review for the buyer in the deal room.`);
     return out;
   });
 }
@@ -393,6 +468,7 @@ export async function tick(requestId: string) {
   const r = getRequest(await read(), requestId);
   if (r.status === "shipped" && r.delivery && r.delivery.inspectionEndsAt <= nowIso()) return release(requestId, null);
   if (r.status === "open") await freshHold(requestId);
+  if (r.status === "completed") await syncPayout(requestId);
   return { status: r.status };
 }
 
@@ -449,7 +525,7 @@ export async function acceptSettlement(requestId: string, meId: string) {
     refundId = ref.refundId;
     refundStatus = ref.status;
   }
-  const { batch, status, seller } = await payOut(requestId, fees.payoutCents, `Settled dispute: price ${usd(paid)}, refunded ${usd(refundCents)}, fee ${usd(fees.feeCents)}.`);
+  const { batch, status, seller, to } = await payOut(requestId, fees.payoutCents, `Settled dispute: price ${usd(paid)}, refunded ${usd(refundCents)}, fee ${usd(fees.feeCents)}.`);
   return commit(requestId, (x) => {
     if (refundCents > 0) x.paypal.refunds.push({ id: refundId, cents: refundCents, status: refundStatus });
     x.paypal.payoutCents = fees.payoutCents;
@@ -459,7 +535,8 @@ export async function acceptSettlement(requestId: string, meId: string) {
     x.status = fees.payoutCents > 0 ? "completed" : "cancelled";
     log(x, `Dispute settled by agreement.`);
     if (refundCents > 0) log(x, `PayPal refunded ${usd(refundCents)} to the buyer (refund ${refundId}, ${refundStatus})${x.sample ? " (simulated)" : ""}.`, "money");
-    if (fees.payoutCents > 0) log(x, `PayPal Payouts sent ${usd(fees.payoutCents)} to ${seller.name} (batch ${batch}, ${status})${x.sample ? " (simulated)" : ""}.`, "money");
+    if (fees.payoutCents > 0) x.paypal.payoutTo = to;
+    if (fees.payoutCents > 0) log(x, `PayPal Payouts sent ${usd(fees.payoutCents)} to ${seller.name} via ${to} (batch ${batch}, ${status})${x.sample ? " (simulated)" : ""}.`, "money");
     return { status: x.status };
   });
 }

@@ -29,7 +29,7 @@ export default async function Settings({ searchParams }: { searchParams: Promise
         <Card className="mt-8 p-6 text-sm text-muted">This is a shared demo account, so it can&apos;t be edited. Sign out and create your own account with your email.</Card>
       ) : (
         <SettingsForm
-          me={{ name: me.name, city: me.city, bio: me.bio, role: me.role, paypalEmail: me.paypalEmail, categories: me.categories, email: me.email ?? "", paypal: me.paypal ? { email: me.paypal.email, verified: me.paypal.verified } : null, address: me.address ?? parseCityState(me.city), addressFromPayPal: me.address?.source === "paypal" }}
+          me={{ name: me.name, city: me.city, bio: me.bio, role: me.role, paypalEmail: me.paypalEmail, categories: me.categories, email: me.email ?? "", paypal: me.paypal ? { email: me.paypal.email, verified: me.paypal.verified } : null, address: me.address ?? parseCityState(me.city), addressFromPayPal: me.address?.source === "paypal", payoutMethod: me.payout?.method ?? "paypal", venmo: me.payout?.venmo ?? "" }}
           note={note}
         />
       )}

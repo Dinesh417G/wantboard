@@ -34,8 +34,11 @@ export function DealRoom({ v, clientId, canSell }: { v: RequestView; clientId: s
     else if (!renewTried.current && v.status === "open" && !v.sample && v.paypal.authorizedAt && Date.now() - Date.parse(v.paypal.authorizedAt) > HONOR_MS) {
       renewTried.current = true; // once per visit, even if PayPal refuses
       act("tick");
+    } else if (!renewTried.current && v.status === "completed" && !v.sample && v.paypal.payoutBatchId && !["SUCCESS", "FAILED", "UNCLAIMED", "RETURNED", "BLOCKED", "DENIED", "REFUNDED", "REVERSED"].includes(v.paypal.payoutStatus ?? "")) {
+      renewTried.current = true; // ask PayPal for the payout status once per visit
+      act("tick");
     }
-  }, [v.status, v.delivery, v.sample, v.paypal.authorizedAt, act]);
+  }, [v.status, v.delivery, v.sample, v.paypal.authorizedAt, v.paypal.payoutBatchId, v.paypal.payoutStatus, act]);
 
   const latest = thread?.offers.at(-1);
   const sellerCanOffer = me === "seller" && canSell && v.canOffer && v.status === "open" && (!latest || latest.status !== "open" || latest.by === "buyer");

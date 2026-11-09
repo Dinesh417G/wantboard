@@ -10,6 +10,8 @@ import { left, useNow } from "./hooks";
 
 type Act = (action: string, payload?: unknown) => Promise<unknown>;
 
+const PROBLEM = new Set(["FAILED", "UNCLAIMED", "RETURNED", "BLOCKED", "REFUNDED", "REVERSED", "DENIED"]);
+
 const STEPS = ["Posted", "Funds held", "Negotiating", "Agreed", "Shipped", "Inspected", "Paid out"];
 const STEP_OF: Record<RequestView["status"], number> = { draft: 0, open: 2, agreed: 3, shipped: 4, disputed: 5, completed: 7, cancelled: -1 };
 
@@ -305,10 +307,37 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
             <div>
               <h3 className="font-medium">Deal closed</h3>
               <p className="text-xs text-muted">
-                Seller received {usd(v.paypal.payoutCents ?? 0)} via PayPal Payouts{v.paypal.payoutBatchId ? ` (batch ${v.paypal.payoutBatchId})` : ""}.
+                PayPal Payouts sent {usd(v.paypal.payoutCents ?? 0)} to the seller{v.paypal.payoutTo ? ` via ${v.paypal.payoutTo.replace(/^PayPal .+@.+$/, "PayPal")}` : ""}
+                {v.paypal.payoutBatchId ? ` (batch ${v.paypal.payoutBatchId})` : ""}.
               </p>
             </div>
+            {!v.sample && (
+              <Badge
+                tone={v.paypal.payoutStatus === "SUCCESS" ? "mint" : PROBLEM.has(v.paypal.payoutStatus ?? "") ? "rose" : "amber"}
+                className="ml-auto"
+              >
+                payout {(v.paypal.payoutStatus ?? "pending").toLowerCase()}
+              </Badge>
+            )}
           </div>
+          {PROBLEM.has(v.paypal.payoutStatus ?? "") && (isSeller || role === "buyer") && (
+            <div className="mt-4 rounded-xl border border-rose/30 bg-rose/10 p-4 text-sm">
+              <div className="font-medium text-rose-100">The payout didn&apos;t arrive ({v.paypal.payoutStatus?.toLowerCase()})</div>
+              <p className="mt-1 text-rose-100/80">
+                {isSeller ? "Check your payout account (PayPal or Venmo) in Settings, then send it again." : "The seller has been told to fix their payout account."}
+              </p>
+              {isSeller && (
+                <div className="mt-3 flex gap-2">
+                  <a href="/settings" className="inline-flex h-8 items-center rounded-lg border border-line px-3 text-xs hover:bg-white/5">
+                    Open Settings
+                  </a>
+                  <Button size="sm" disabled={!!busy} onClick={() => act("retry-payout")}>
+                    {busy === "retry-payout" ? <Loader2 className="size-4 animate-spin" /> : null} Retry payout
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
           {(role === "buyer" || isSeller) && !v.reviews.some((r) => r.by === role) && (
             <div className="mt-5 space-y-3 border-t border-line pt-5">
               <div className="text-sm font-medium">Leave a review</div>

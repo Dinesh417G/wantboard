@@ -33,6 +33,8 @@ export type Party = {
   paypal?: PayPalLink;
   /** Default delivery address (buyers) / ships-from address (sellers). Private: never shown publicly. */
   address?: Address & { source: "paypal" | "manual" };
+  /** How a seller gets paid. Default: PayPal (linked account, else paypalEmail). */
+  payout?: { method: "paypal" | "venmo"; venmo?: string };
 };
 
 export type Address = { line1: string; line2?: string; city: string; state: string; zip: string; country: "US" };
@@ -149,6 +151,12 @@ export type WantRequest = {
     capturedCents?: number;
     refunds: { id: string; cents: number; status: string }[];
     payoutBatchId?: string;
+    payoutItemId?: string;
+    /** Latest PayPal payout item status (SUCCESS, PENDING, UNCLAIMED, FAILED, RETURNED...). */
+    payoutStatus?: string;
+    payoutAttempts?: number;
+    payoutCheckedAt?: string;
+    payoutTo?: string;
     payoutCents?: number;
     feeCents?: number;
   };

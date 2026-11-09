@@ -149,7 +149,17 @@ export async function refundCapture(captureId: string, note: string, cents?: num
 }
 
 /** Pay the seller (winning price minus platform fee): to their linked PayPal account (payer ID) if they have one, else by email. */
-export async function payoutSeller(opts: { batchKey: string; email: string; payerId?: string; cents: number; note: string }) {
+export async function payoutSeller(opts: { batchKey: string; email: string; payerId?: string; venmo?: string; cents: number; note: string }) {
+  // Venmo (US): phone, email or @handle. Otherwise PayPal: linked payer ID, else email.
+  const v = opts.venmo?.trim();
+  const venmoDigits = v?.replace(/\D/g, "") ?? "";
+  const recipient = v
+    ? v.includes("@") && !v.startsWith("@")
+      ? { recipient_type: "EMAIL", receiver: v, recipient_wallet: "VENMO" }
+      : /^\+?[\d\s().-]{10,}$/.test(v)
+        ? { recipient_type: "PHONE", receiver: venmoDigits.slice(-10), recipient_wallet: "VENMO" }
+        : { recipient_type: "USER_HANDLE", receiver: v.replace(/^@/, ""), recipient_wallet: "VENMO" }
+    : { recipient_type: opts.payerId ? "PAYPAL_ID" : "EMAIL", receiver: opts.payerId || opts.email };
   const res = await call(
     "POST",
     "/v1/payments/payouts",
@@ -161,8 +171,7 @@ export async function payoutSeller(opts: { batchKey: string; email: string; paye
       },
       items: [
         {
-          recipient_type: opts.payerId ? "PAYPAL_ID" : "EMAIL",
-          receiver: opts.payerId || opts.email,
+          ...recipient,
           amount: { currency: "USD", value: toPayPalValue(opts.cents) },
           note: opts.note.slice(0, 4000),
           sender_item_id: opts.batchKey,
@@ -280,4 +289,23 @@ export async function addTracking(orderId: string, captureId: string, trackingNu
   );
   const tracker = res.purchase_units?.[0]?.shipping?.trackers?.at?.(-1);
   return { trackerId: (tracker?.id ?? `${captureId}-${trackingNumber}`) as string, status: (tracker?.status ?? "SHIPPED") as string };
+}
+
+// ---------- Payout status ----------
+
+/** Status of the (single) item in a payout batch: SUCCESS, PENDING, UNCLAIMED, FAILED, RETURNED, ONHOLD, BLOCKED... */
+export async function getPayout(batchId: string) {
+  const res = await call("GET", `/v1/payments/payouts/${batchId}`);
+  const item = res.items?.[0];
+  return {
+    batchStatus: String(res.batch_header?.batch_status ?? ""),
+    itemId: item?.payout_item_id as string | undefined,
+    status: String(item?.transaction_status ?? res.batch_header?.batch_status ?? "PENDING"),
+    error: (item?.errors?.message ?? item?.errors?.name) as string | undefined,
+  };
+}
+
+/** Take back an unclaimed payout (e.g. wrong email) so it can be sent again. */
+export function cancelUnclaimedPayout(itemId: string) {
+  return call("POST", `/v1/payments/payouts-item/${itemId}/cancel`);
 }

@@ -7,7 +7,7 @@ import { CATEGORIES } from "@/lib/types";
 import { Button, Card, Field, Input, Textarea, cn } from "@/components/ui";
 import { AddressFields, readAddress, type AddressValue } from "@/components/AddressFields";
 
-type Me = { name: string; city: string; bio: string; role: "buyer" | "seller"; paypalEmail: string; categories: string[]; email: string; paypal: { email: string; verified: boolean } | null; address: AddressValue | null; addressFromPayPal: boolean };
+type Me = { name: string; city: string; bio: string; role: "buyer" | "seller"; paypalEmail: string; categories: string[]; email: string; paypal: { email: string; verified: boolean } | null; address: AddressValue | null; addressFromPayPal: boolean; payoutMethod: "paypal" | "venmo"; venmo: string };
 
 export function SettingsForm({ me, note }: { me: Me; note?: { ok: boolean; text: string } }) {
   const router = useRouter();
@@ -16,6 +16,7 @@ export function SettingsForm({ me, note }: { me: Me; note?: { ok: boolean; text:
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [unlinking, setUnlinking] = useState(false);
+  const [method, setMethod] = useState(me.payoutMethod);
 
   async function unlink() {
     setUnlinking(true);
@@ -33,7 +34,7 @@ export function SettingsForm({ me, note }: { me: Me; note?: { ok: boolean; text:
     const res = await fetch("/api/auth/profile", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: fd.get("name"), address: readAddress(fd), bio: fd.get("bio"), paypalEmail: fd.get("paypalEmail"), role, categories: cats }),
+      body: JSON.stringify({ name: fd.get("name"), address: readAddress(fd), bio: fd.get("bio"), paypalEmail: fd.get("paypalEmail"), role, categories: cats, payoutMethod: method, venmo: fd.get("venmo") }),
     });
     const out = await res.json().catch(() => ({}));
     setBusy(false);
@@ -94,8 +95,35 @@ export function SettingsForm({ me, note }: { me: Me; note?: { ok: boolean; text:
             </button>
           ))}
         </div>
+        {role === "seller" && (
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wider text-muted">Get paid with</div>
+            <div className="mt-2 flex gap-2">
+              {(
+                [
+                  ["paypal", "PayPal"],
+                  ["venmo", "Venmo"],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setMethod(k)}
+                  className={cn("rounded-full border px-4 py-1.5 text-sm transition", method === k ? "border-brand/50 bg-brand/15 text-violet-100" : "border-line text-muted")}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {method === "venmo" && (
+              <Field label="Venmo phone, email or @username" hint="US only. PayPal Payouts sends your money straight to Venmo." className="mt-3">
+                <Input name="venmo" defaultValue={me.venmo} required placeholder="@your-shop or (512) 555-0100" />
+              </Field>
+            )}
+          </div>
+        )}
         <Field label="PayPal email for payouts" hint={me.paypal ? "Not used while PayPal is connected: payouts go to the connected account." : "PayPal sandbox account while Clinch runs in demo mode."}>
-          <Input name="paypalEmail" type="email" defaultValue={me.paypalEmail} required={role === "seller" && !me.paypal} />
+          <Input name="paypalEmail" type="email" defaultValue={me.paypalEmail} required={role === "seller" && !me.paypal && method !== "venmo"} />
         </Field>
         {role === "seller" && (
           <div>
