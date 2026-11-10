@@ -25,8 +25,11 @@ export async function refreshPro(partyId: string, subscriptionId: string): Promi
   const sub = await getSubscription(subscriptionId);
   const plan = await proPlanId();
   if (sub.planId !== plan) throw new Error("That subscription is not for Clinch Pro");
-  if (sub.customId && sub.customId !== partyId) throw new Error("That subscription belongs to another account");
-  const status = sub.status === "APPROVED" ? "ACTIVE" : sub.status;
+  // The checkout always sets custom_id = the seller's party id, so a subscription without it (or with someone else's) is not theirs.
+  if (sub.customId !== partyId) throw new Error("That subscription is not linked to your account");
+  // Only PayPal's ACTIVE counts as Pro. APPROVED (buyer approved, first payment not confirmed yet) is kept as pending
+  // and flips to ACTIVE through the BILLING.SUBSCRIPTION.ACTIVATED webhook or the next refresh.
+  const status = sub.status;
   await mutate((db) => {
     const p = db.parties.find((x) => x.id === partyId);
     if (!p) return;

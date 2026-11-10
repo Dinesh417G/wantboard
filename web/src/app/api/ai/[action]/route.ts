@@ -1,17 +1,16 @@
 import { body, handle } from "@/lib/http";
-import { viewerId, viewerIn } from "@/lib/viewer";
-import { getRequest, NotFound, read } from "@/lib/store";
+import { getRequest, NotFound } from "@/lib/store";
 import { viewRequest } from "@/lib/dto";
 import { matchSellers, riskCheck, suggestCounter, summarize } from "@/lib/ai";
+import { gate } from "@/lib/ratelimit";
+import type { Db, Party } from "@/lib/types";
 
 type Ctx = { params: Promise<{ action: string }> };
 
 /** Copilot actions. Context is the viewer-filtered view only: the other side's private limit never reaches the model. */
-export const POST = handle(async (req: Request, { params }: Ctx) => {
+const run = handle(async (req: Request, { params }: Ctx, db: Db, viewer: Party) => {
   const { action } = await params;
   const b = await body(req);
-  const db = await read();
-  const viewer = viewerIn(db, await viewerId());
   const v = viewRequest(db, getRequest(db, String(b.requestId)), viewer);
   const threadId = typeof b.threadId === "string" ? b.threadId : undefined;
   switch (action) {
@@ -31,3 +30,10 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
       throw new NotFound("unknown copilot action");
   }
 });
+
+/** Every copilot call spends the shared AI quota, so it needs a signed-in account and is limited per account (20 / 10 min). */
+export async function POST(req: Request, ctx: Ctx) {
+  const g = await gate("ai");
+  if ("deny" in g) return g.deny;
+  return run(req, ctx, g.db, g.me);
+}

@@ -20,7 +20,12 @@ export async function POST(req: Request) {
   const { subscriptionId } = await req.json().catch(() => ({}));
   if (typeof subscriptionId !== "string" || !/^I-[A-Z0-9]{6,}$/.test(subscriptionId)) return NextResponse.json({ error: "Missing PayPal subscription" }, { status: 400 });
   try {
-    const status = await refreshPro(s.me.id, subscriptionId);
+    let status = await refreshPro(s.me.id, subscriptionId);
+    // PayPal can report APPROVED (not yet Pro) for a few seconds before ACTIVE: re-check briefly so a fresh subscriber isn't left pending.
+    for (let i = 0; i < 2 && status === "APPROVED"; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      status = await refreshPro(s.me.id, subscriptionId);
+    }
     if (status === "ACTIVE") adminAlert(`Clinch Pro started: ${s.me.name}`, { Seller: s.me.name, Subscription: subscriptionId }, `${siteUrl()}/u/${s.me.handle}`);
     return NextResponse.json({ ok: true, status });
   } catch (e) {
