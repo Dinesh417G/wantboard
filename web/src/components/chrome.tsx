@@ -4,6 +4,8 @@ import { read } from "@/lib/store";
 import { viewerId, viewerIn, GUEST_ID } from "@/lib/viewer";
 import { SITE } from "@/lib/config/site";
 import { PersonaSwitcher } from "./PersonaSwitcher";
+import { MobileNav } from "./MobileNav";
+import { NAV_LINKS } from "./nav-links";
 export { StatusPill } from "./StatusPill";
 import { Badge } from "./ui";
 
@@ -27,14 +29,7 @@ export async function Header() {
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-6 px-4 sm:px-6">
         <Logo />
         <nav className="hidden items-center gap-1 text-sm md:flex">
-          {[
-            ["/dashboard", "Dashboard"],
-            ["/board", "Live board"],
-            ["/sellers", "Sellers"],
-            ["/post", "Post a need"],
-            ["/#how", "How it works"],
-            ["/#compare", "Compare"],
-          ].map(([href, label]) => (
+          {NAV_LINKS.map(([href, label]) => (
             <Link key={href} href={href} className="rounded-lg px-3 py-1.5 text-muted transition hover:bg-white/5 hover:text-fg">
               {label}
             </Link>
@@ -51,6 +46,7 @@ export async function Header() {
           ) : (
             <PersonaSwitcher me={{ id: me.id, name: me.name, role: me.role, city: me.city, handle: me.handle, demo: me.demo }} people={people} />
           )}
+          <MobileNav />
         </div>
       </div>
     </header>
