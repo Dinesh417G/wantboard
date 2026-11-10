@@ -188,6 +188,9 @@ export type WantRequest = {
       buyerMessage?: string;
       evidenceSentAt?: string;
       acceptedAt?: string;
+      /** Seller's partial-refund offer made through PayPal (inquiry stage). */
+      offer?: { cents: number; at: string };
+      messageSentAt?: string;
     };
     disputeCheckedAt?: string;
     payoutCents?: number;

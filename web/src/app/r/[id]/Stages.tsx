@@ -169,6 +169,7 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
   const [note, setNote] = useState("");
   const [dReason, setDReason] = useState("not_as_described");
   const [dText, setDText] = useState("");
+  const [dOffer, setDOffer] = useState("");
   const [refund, setRefund] = useState("");
   const [rating, setRating] = useState(5);
   const [review, setReview] = useState("");
@@ -212,7 +213,35 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
                   Accept claim &amp; refund
                 </ConfirmButton>
               </div>
+              {ppd.stage === "INQUIRY" && (
+                <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+                  <span className="text-xs text-muted">Settle in PayPal: offer a partial refund</span>
+                  <Input
+                    inputMode="decimal"
+                    value={dOffer}
+                    onChange={(e) => setDOffer(e.target.value)}
+                    placeholder={`less than ${usd(ppd.amountCents)}`}
+                    className="num h-9 w-36"
+                    aria-label="Partial refund amount (USD)"
+                  />
+                  <ConfirmButton
+                    size="sm"
+                    variant="secondary"
+                    disabled={!!busy || !dOffer.trim()}
+                    prompt={`Offer the buyer a ${dOffer.trim() ? `$${dOffer.trim()}` : ""} refund through PayPal?`}
+                    confirmLabel="Yes, send offer"
+                    onConfirm={() => act("paypal-dispute", { choice: "offer", amount: dOffer, note: dText })}
+                  >
+                    Offer partial refund
+                  </ConfirmButton>
+                  <Button size="sm" variant="ghost" disabled={!!busy || dText.trim().length < 2} onClick={() => act("paypal-dispute", { choice: "message", note: dText })}>
+                    Message the buyer in PayPal
+                  </Button>
+                </div>
+              )}
               <ActionError actions={["paypal-dispute"]} />
+              {ppd.offer && <p className="text-xs text-mint">Offered a {usd(ppd.offer.cents)} refund {ppd.offer.at.slice(0, 16).replace("T", " ")} UTC. Waiting for the buyer in PayPal.</p>}
+              {ppd.messageSentAt && <p className="text-xs text-muted">Message sent {ppd.messageSentAt.slice(0, 16).replace("T", " ")} UTC.</p>}
               {ppd.evidenceSentAt && <p className="text-xs text-mint">Evidence sent {ppd.evidenceSentAt.slice(0, 16).replace("T", " ")} UTC. PayPal reviews it.</p>}
             </div>
           )}

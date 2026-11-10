@@ -2,7 +2,7 @@
 // calls PayPal (or simulates it for sample deals, and says so), and appends to the money trail.
 import "server-only";
 import { canServe, reachShort } from "./domain/location";
-import { acceptDisputeClaim, addTracking, cancelUnclaimedPayout, captureDetails, CARRIERS, disputesForCapture, getDispute, getPayout, provideDisputeEvidence, reauthorize, type Carrier, type PayPalDispute } from "./paypal";
+import { acceptDisputeClaim, addTracking, cancelUnclaimedPayout, captureDetails, CARRIERS, makeDisputeOffer, sendDisputeMessage, disputesForCapture, getDispute, getPayout, provideDisputeEvidence, reauthorize, type Carrier, type PayPalDispute } from "./paypal";
 import { PayPalError, authorizeOrder, captureAuthorization, createAuthorizeOrder, orderStatus, payoutSeller, refundCapture, voidAuthorization } from "./paypal";
 import { Conflict, Forbidden, NotFound, demoOnRealDeal, getRequest, id, log, mutate, nowIso, read, sha256 } from "./store";
 import { canonical, diffTerms, summarizeDiff, validateTerms, type Terms } from "./domain/offers";
@@ -992,6 +992,23 @@ export async function respondPayPalDispute(requestId: string, meId: string, b: R
     await commit(requestId, (x) => {
       x.paypal.dispute!.acceptedAt = nowIso();
       log(x, `Seller accepted the PayPal claim. PayPal refunds the buyer ${usd(d.amountCents)}.`, "money");
+    });
+  } else if (b.choice === "offer") {
+    if (d.stage !== "INQUIRY") throw new Conflict("PayPal only takes refund offers while the dispute is an inquiry");
+    const cents = parseDollars(b.amount);
+    if (cents === null || cents <= 0) throw new BadInput("Enter the refund you offer, like 25 or 25.50");
+    if (cents >= d.amountCents) throw new BadInput(`A partial refund has to be less than the disputed ${usd(d.amountCents)}. To refund everything, accept the claim.`);
+    await makeDisputeOffer(d.id, note || `Seller offers a partial refund of ${usd(cents)} to settle.`, cents);
+    await commit(requestId, (x) => {
+      x.paypal.dispute!.offer = { cents, at: nowIso() };
+      log(x, `Seller offered the buyer a ${usd(cents)} partial refund through PayPal (dispute ${d.id}). PayPal asks the buyer to accept or decline.`, "money");
+    });
+  } else if (b.choice === "message") {
+    if (note.length < 2) throw new BadInput("Write a message for the buyer");
+    await sendDisputeMessage(d.id, note);
+    await commit(requestId, (x) => {
+      x.paypal.dispute!.messageSentAt = nowIso();
+      log(x, `Seller messaged the buyer in PayPal dispute ${d.id}.`);
     });
   } else {
     if (note.length < 10) throw new BadInput("Explain what happened (at least a sentence)");

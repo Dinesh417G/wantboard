@@ -417,6 +417,11 @@ export function provideDisputeEvidence(id: string, note: string, tracking?: { ca
   });
 }
 
+/** Seller offers the buyer a partial refund to settle (inquiry stage). PayPal asks the buyer to accept or decline. */
+export function makeDisputeOffer(id: string, note: string, cents: number) {
+  return call("POST", `/v1/customer/disputes/${id}/make-offer`, { note: note.slice(0, 2000), offer_amount: money(cents), offer_type: "REFUND" }, `offer-${id}-${cents}`);
+}
+
 /** Seller agrees with the buyer: PayPal refunds the disputed amount. */
 export function acceptDisputeClaim(id: string, note: string) {
   return call("POST", `/v1/customer/disputes/${id}/accept-claim`, { note: note.slice(0, 2000) }, `accept-${id}`);
