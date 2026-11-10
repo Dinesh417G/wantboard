@@ -51,11 +51,20 @@ export function locationOf(p: Party): { city: string; state: string } | null {
   return parseCityState(p.city);
 }
 
-/** Can this seller make offers on this request? */
+/**
+ * Where a seller is for state/city reach. Only an address that came from PayPal counts: a typed city or address is
+ * self-reported and costs nothing to fake. Demo accounts are fixed seed data nobody can edit, so their listed city counts.
+ */
+export function verifiedLocationOf(p: Party): { city: string; state: string } | null {
+  if (p.address?.source === "paypal" || p.demo) return locationOf(p);
+  return null;
+}
+
+/** Can this seller make offers on this request? Reach "us" takes anyone; state/city need a verified location. */
 export function canServe(seller: Party, r: Pick<WantRequest, "reach" | "shipTo">): boolean {
   const reach = r.reach ?? "us";
   if (reach === "us" || !r.shipTo) return true;
-  const at = locationOf(seller);
+  const at = verifiedLocationOf(seller);
   if (!at || at.state !== r.shipTo.state) return false;
   return reach === "state" || norm(at.city) === norm(r.shipTo.city);
 }
