@@ -43,7 +43,8 @@ export async function gate(scope: string, limit = 20, windowMs = 600_000): Promi
     return { deny: NextResponse.json({ error: "Something went wrong" }, { status: 500 }) };
   }
   if (me.id === GUEST_ID) return { deny: NextResponse.json({ error: "Sign in first" }, { status: 401 }) };
-  const rl = rateLimit(`${scope}:${me.id}`, limit, windowMs);
+  // Demo personas are shared by every judge/visitor who clicks the one-click login, so they get 3x the allowance.
+  const rl = rateLimit(`${scope}:${me.id}`, me.demo ? limit * 3 : limit, windowMs);
   if (!rl.ok) {
     return { deny: NextResponse.json({ error: `Too many requests. Try again in ${Math.ceil(rl.retryAfterSec / 60)} min.` }, { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } }) };
   }
