@@ -9,9 +9,10 @@ import { Button, Card, Field, Input, Select, Textarea } from "@/components/ui";
 import { PhotoPicker } from "@/components/PhotoPicker";
 import { AddressFields, readAddress, type AddressValue } from "@/components/AddressFields";
 import { REACH_LABEL } from "@/lib/domain/location";
+import { PayLaterLine } from "@/components/PayLaterLine";
 import type { Reach } from "@/lib/types";
 
-export function PostForm({ buyerName, address, addressFromPayPal }: { buyerName: string; address: AddressValue | null; addressFromPayPal: boolean }) {
+export function PostForm({ buyerName, address, addressFromPayPal, clientId = "" }: { buyerName: string; address: AddressValue | null; addressFromPayPal: boolean; clientId?: string }) {
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -154,6 +155,7 @@ export function PostForm({ buyerName, address, addressFromPayPal }: { buyerName:
         <div className="flex-1 text-sm">
           <div className="font-medium">Next: PayPal holds {budgetCents ? usd(budgetCents) : "your max price"}</div>
           <div className="text-muted">Authorized, not charged. You pay only the offer you accept; the rest is released. Posting as {buyerName}.</div>
+          <PayLaterLine clientId={clientId} cents={budgetCents} />
         </div>
         <Button type="submit" size="lg" disabled={busy}>
           {busy ? <Loader2 className="size-4 animate-spin" /> : null} Continue to PayPal
