@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { read } from "@/lib/store";
-import { viewerId, viewerIn } from "@/lib/viewer";
+import { GUEST_ID, viewerId, viewerIn } from "@/lib/viewer";
 import { viewRequest } from "@/lib/dto";
 import { DealRoom } from "./DealRoom";
 import { orderStatus } from "@/lib/paypal";
@@ -28,5 +28,5 @@ export default async function RequestPage({ params }: Props) {
     r.status === "draft" && r.buyerId === viewer.id && !!r.paypal.orderId && !r.sample
       ? (await orderStatus(r.paypal.orderId).catch(() => "")) === "APPROVED"
       : false;
-  return <DealRoom v={v} holdApproved={holdApproved} clientId={process.env.PAYPAL_CLIENT_ID ?? ""} canSell={viewer.role === "seller" && (viewer.categories.includes(r.category) || !!r.matches?.some((m) => m.sellerId === viewer.id))} />;
+  return <DealRoom v={v} signedIn={viewer.id !== GUEST_ID} holdApproved={holdApproved} clientId={process.env.PAYPAL_CLIENT_ID ?? ""} canSell={viewer.role === "seller" && (viewer.categories.includes(r.category) || !!r.matches?.some((m) => m.sellerId === viewer.id))} />;
 }

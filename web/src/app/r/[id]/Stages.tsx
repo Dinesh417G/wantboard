@@ -6,6 +6,9 @@ import { CheckCircle2, Fingerprint, Gavel, Loader2, Lock, PackageCheck, ShieldAl
 import type { RequestView } from "@/lib/dto";
 import { usd } from "@/lib/domain/money";
 import { Badge, Button, Card, Field, Input, Select, Textarea, cn } from "@/components/ui";
+import { ConfirmButton } from "@/components/ConfirmButton";
+import { PayPalState } from "@/components/PayPalState";
+import { ActionError } from "./ActionError";
 import { left, useNow } from "./hooks";
 
 type Act = (action: string, payload?: unknown) => Promise<unknown>;
@@ -51,7 +54,7 @@ export function Stepper({ v }: { v: RequestView }) {
   );
 }
 
-export function HoldPanel({ v, clientId, act, setError, approved = false, busy = null }: { v: RequestView; clientId: string; act: Act; setError: (s: string) => void; approved?: boolean; busy?: string | null }) {
+export function HoldPanel({ v, clientId, act, setError, approved = false, busy = null }: { v: RequestView; clientId: string; act: Act; setError: (s: string, action?: string) => void; approved?: boolean; busy?: string | null }) {
   if (approved)
     return (
       <Card className="edge p-6">
@@ -65,6 +68,7 @@ export function HoldPanel({ v, clientId, act, setError, approved = false, busy =
             <Button className="mt-4" disabled={!!busy} onClick={() => act("authorize")}>
               {busy === "authorize" ? <Loader2 className="size-4 animate-spin" /> : <Lock className="size-4" />} Place the hold
             </Button>
+            <ActionError actions={["authorize"]} className="mt-3" />
           </div>
         </div>
       </Card>
@@ -84,27 +88,30 @@ export function HoldPanel({ v, clientId, act, setError, approved = false, busy =
           <div className="mt-5 max-w-sm rounded-2xl bg-white p-3">
             {clientId ? (
               <PayPalScriptProvider options={{ clientId, currency: "USD", intent: "authorize", enableFunding: "paylater,venmo", buyerCountry: "US", components: "buttons,messages" }}>
-                <div className="mb-2">
-                  <PayPalMessages amount={v.budgetCents / 100} style={{ layout: "text", logo: { type: "inline" }, text: { color: "black", size: 12 } }} />
-                </div>
-                <PayPalButtons
-                  style={{ layout: "vertical", shape: "pill", color: "gold", label: "paypal" }}
-                  createOrder={async () => {
-                    const res = await fetch(`/api/requests/${v.id}/hold`, { method: "POST" });
-                    const out = await res.json();
-                    if (!res.ok) throw new Error(out.error);
-                    return out.orderId;
-                  }}
-                  onApprove={async (data) => {
-                    await act("authorize", { orderId: data.orderID });
-                  }}
-                  onError={(e) => setError(String(e?.message ?? "PayPal error"))}
-                />
+                <PayPalState>
+                  <div className="mb-2">
+                    <PayPalMessages amount={v.budgetCents / 100} style={{ layout: "text", logo: { type: "inline" }, text: { color: "black", size: 12 } }} />
+                  </div>
+                  <PayPalButtons
+                    style={{ layout: "vertical", shape: "pill", color: "gold", label: "paypal" }}
+                    createOrder={async () => {
+                      const res = await fetch(`/api/requests/${v.id}/hold`, { method: "POST" });
+                      const out = await res.json().catch(() => ({}));
+                      if (!res.ok) throw new Error(out.error ?? `Couldn't start the PayPal hold (${res.status})`);
+                      return out.orderId;
+                    }}
+                    onApprove={async (data) => {
+                      await act("authorize", { orderId: data.orderID });
+                    }}
+                    onError={(e) => setError(String(e?.message ?? "PayPal error"), "hold")}
+                  />
+                </PayPalState>
               </PayPalScriptProvider>
             ) : (
-              <p className="text-sm text-rose-600">PAYPAL_CLIENT_ID is not configured.</p>
+              <p className="text-sm text-rose-700">Payments are temporarily unavailable.</p>
             )}
           </div>
+          <ActionError actions={["hold", "authorize"]} className="mt-3" />
           <p className="mt-3 text-xs text-dim">Sandbox: log in with a PayPal sandbox personal account.</p>
         </div>
       </div>
@@ -128,7 +135,7 @@ export function AgreementCard({ v }: { v: RequestView }) {
             {v.buyer.name} and {t?.seller.name ?? "the seller"} · signed {a.createdAt.slice(0, 10)}
           </p>
         </div>
-        <button onClick={() => setFull((x) => !x)} className="ml-auto rounded-lg border border-line px-2.5 py-1 font-mono text-[11px] text-muted hover:text-fg" title="SHA-256 of the canonical terms">
+        <button onClick={() => setFull((x) => !x)} className="ml-auto max-w-full break-all rounded-lg border border-line px-2.5 py-1 text-left font-mono text-[11px] text-muted hover:text-fg" title="SHA-256 of the canonical terms">
           sha256 {full ? a.termsHash : `${a.termsHash.slice(0, 12)}…`}
         </button>
       </div>
@@ -194,10 +201,18 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
                 <Button size="sm" disabled={!!busy || dText.trim().length < 10} onClick={() => act("paypal-dispute", { choice: "evidence", note: dText })}>
                   {busy === "paypal-dispute" ? <Loader2 className="size-4 animate-spin" /> : null} Send to PayPal{v.delivery?.tracking ? " with tracking" : ""}
                 </Button>
-                <Button size="sm" variant="danger" disabled={!!busy} onClick={() => act("paypal-dispute", { choice: "accept", note: dText })}>
+                <ConfirmButton
+                  size="sm"
+                  variant="danger"
+                  disabled={!!busy}
+                  prompt="Accept the buyer's claim? PayPal refunds the buyer and you are not paid."
+                  confirmLabel="Yes, accept & refund"
+                  onConfirm={() => act("paypal-dispute", { choice: "accept", note: dText })}
+                >
                   Accept claim &amp; refund
-                </Button>
+                </ConfirmButton>
               </div>
+              <ActionError actions={["paypal-dispute"]} />
               {ppd.evidenceSentAt && <p className="text-xs text-mint">Evidence sent {ppd.evidenceSentAt.slice(0, 16).replace("T", " ")} UTC. PayPal reviews it.</p>}
             </div>
           )}
@@ -248,6 +263,7 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
                 </Button>
                 <span className="text-xs text-dim">Tracking is added to the buyer&apos;s PayPal order, which supports PayPal Seller Protection.</span>
               </div>
+              <ActionError actions={["ship"]} className="mt-3" />
             </>
           ) : (
             <p className="mt-3 text-sm text-muted">
@@ -255,9 +271,19 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
             </p>
           )}
           {role === "buyer" && (
-            <Button variant="danger" size="sm" className="mt-4" disabled={!!busy} onClick={() => act("cancel")}>
-              Cancel & refund {usd(v.paypal.capturedCents ?? 0)}
-            </Button>
+            <div className="mt-4 space-y-2">
+              <ConfirmButton
+                variant="danger"
+                size="sm"
+                disabled={!!busy}
+                prompt={`Cancel and refund ${usd(v.paypal.capturedCents ?? 0)}? The deal ends.`}
+                confirmLabel="Yes, cancel & refund"
+                onConfirm={() => act("cancel")}
+              >
+                Cancel & refund {usd(v.paypal.capturedCents ?? 0)}
+              </ConfirmButton>
+              <ActionError actions={["cancel"]} />
+            </div>
           )}
         </Card>
       )}
@@ -289,9 +315,17 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
               <div className="rounded-2xl border border-mint/25 bg-mint/[0.05] p-4">
                 <div className="font-medium">Looks right?</div>
                 <p className="mt-1 text-xs text-muted">PayPal Payouts sends {usd(v.paypal.payoutCents ?? 0)} to the seller.</p>
-                <Button variant="success" className="mt-3" disabled={!!busy} onClick={() => act("release")}>
+                <ConfirmButton
+                  variant="success"
+                  className="mt-3"
+                  disabled={!!busy}
+                  prompt={`Pay ${usd(v.paypal.payoutCents ?? 0)} to the seller? This cannot be undone.`}
+                  confirmLabel="Yes, pay seller"
+                  onConfirm={() => act("release")}
+                >
                   {busy === "release" ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />} Accept & pay seller
-                </Button>
+                </ConfirmButton>
+                <ActionError actions={["release"]} className="mt-3" />
               </div>
               <div className="rounded-2xl border border-amber/25 bg-amber/[0.04] p-4">
                 <div className="font-medium">Something wrong?</div>
@@ -304,9 +338,18 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
                     <option value="other">Other</option>
                   </Select>
                   <Textarea rows={2} value={dText} onChange={(e) => setDText(e.target.value)} placeholder="What's wrong? Photos help." />
-                  <Button variant="danger" size="sm" disabled={!!busy} onClick={() => act("dispute", { reason: dReason, description: dText })}>
+                  <ConfirmButton
+                    variant="danger"
+                    size="sm"
+                    disabled={!!busy || dText.trim().length < 10}
+                    prompt="Freeze the payment and open a dispute?"
+                    confirmLabel="Yes, open dispute"
+                    onConfirm={() => act("dispute", { reason: dReason, description: dText })}
+                  >
                     <Gavel className="size-3.5" /> Open dispute & freeze payment
-                  </Button>
+                  </ConfirmButton>
+                  {dText.trim().length < 10 && <p className="text-[11px] text-dim">Describe the problem (at least 10 characters) to enable this.</p>}
+                  <ActionError actions={["dispute"]} />
                 </div>
               </div>
             </div>
@@ -333,9 +376,20 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
               </div>
               {v.dispute.proposal.note && <p className="mt-1 text-xs text-muted">“{v.dispute.proposal.note}”</p>}
               {role === "buyer" && (
-                <Button variant="success" size="sm" className="mt-3" disabled={!!busy} onClick={() => act("settle")}>
-                  {busy === "settle" ? <Loader2 className="size-3.5 animate-spin" /> : null} Accept settlement
-                </Button>
+                <>
+                  <ConfirmButton
+                    variant="success"
+                    size="sm"
+                    className="mt-3"
+                    disabled={!!busy}
+                    prompt={`Accept a refund of ${usd(v.dispute.proposal.refundCents)}? This settles the dispute.`}
+                    confirmLabel="Yes, accept settlement"
+                    onConfirm={() => act("settle")}
+                  >
+                    {busy === "settle" ? <Loader2 className="size-3.5 animate-spin" /> : null} Accept settlement
+                  </ConfirmButton>
+                  <ActionError actions={["settle"]} className="mt-3" />
+                </>
               )}
             </div>
           ) : (
@@ -350,6 +404,7 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
                 <Button disabled={!!busy} onClick={() => act("propose", { refund, note })}>
                   Propose settlement
                 </Button>
+                <ActionError actions={["propose"]} className="w-full" />
               </div>
             )
           )}
@@ -391,6 +446,7 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
                   <Button size="sm" disabled={!!busy} onClick={() => act("retry-payout")}>
                     {busy === "retry-payout" ? <Loader2 className="size-4 animate-spin" /> : null} Retry payout
                   </Button>
+                  <ActionError actions={["retry-payout"]} className="min-w-0 flex-1" />
                 </div>
               )}
             </div>
@@ -409,6 +465,7 @@ export function AfterAgreement({ v, act, busy }: { v: RequestView; act: Act; bus
               <Button size="sm" disabled={!!busy} onClick={() => act("review", { rating, text: review })}>
                 Submit review
               </Button>
+              <ActionError actions={["review"]} />
               <p className="text-xs text-dim">Double-blind: reviews stay hidden until both sides have submitted.</p>
             </div>
           )}

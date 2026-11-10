@@ -40,16 +40,21 @@ export function Agent({ v, act, busy }: { v: RequestView; act: Act; busy: string
     setText("");
     setThinking(true);
     setError("");
-    const res = await fetch("/api/agent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requestId: v.id, history: next.map(({ role, content }) => ({ role, content })) }),
-    });
-    const out = await res.json().catch(() => ({}));
-    setThinking(false);
-    if (!res.ok) return setError(out.error ?? "Clinch Agent is unavailable");
-    setTurns([...next, { role: "assistant", content: out.reply, steps: out.steps, confirm: out.confirm }]);
-    if (out.changed) router.refresh();
+    try {
+      const res = await fetch("/api/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: v.id, history: next.map(({ role, content }) => ({ role, content })) }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) return setError(out.error ?? "Clinch Agent is unavailable");
+      setTurns([...next, { role: "assistant", content: out.reply, steps: out.steps, confirm: out.confirm }]);
+      if (out.changed) router.refresh();
+    } catch {
+      setError("Network problem. Check your connection and try again.");
+    } finally {
+      setThinking(false);
+    }
   }
 
   return (

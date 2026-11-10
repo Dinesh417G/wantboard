@@ -1,17 +1,30 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+
+type ActError = { text: string; action: string };
+
+/** Which deal action failed, so the message can be shown next to the control that was used. */
+const ActErrorContext = createContext<ActError>({ text: "", action: "" });
+export const ActErrorProvider = ActErrorContext.Provider;
+
+/** The last action error, but only when it came from one of `actions` (empty string otherwise). */
+export function useActError(...actions: string[]) {
+  const e = useContext(ActErrorContext);
+  return e.text && actions.includes(e.action) ? e.text : "";
+}
 
 /** Call a deal action and refresh server data. */
 export function useAct(requestId: string) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [err, setErr] = useState<ActError>({ text: "", action: "" });
+  const setError = useCallback((text: string, action = "") => setErr({ text, action }), []);
   const act = useCallback(
     async (action: string, payload: unknown = {}) => {
       setBusy(action);
-      setError("");
+      setErr({ text: "", action: "" });
       try {
         const res = await fetch(`/api/requests/${requestId}/${action}`, {
           method: "POST",
@@ -20,18 +33,21 @@ export function useAct(requestId: string) {
         });
         const out = await res.json().catch(() => ({}));
         if (!res.ok) {
-          setError(out.error ?? `Failed (${res.status})`);
+          setErr({ text: out.error ?? `Failed (${res.status})`, action });
           return null;
         }
         router.refresh();
         return out;
+      } catch {
+        setErr({ text: "Network problem. Check your connection and try again.", action });
+        return null;
       } finally {
         setBusy(null);
       }
     },
     [requestId, router],
   );
-  return { act, busy, error, setError };
+  return { act, busy, error: err.text, errorAction: err.action, setError };
 }
 
 /** Current time, ticking. Starts null so server and client render the same markup. */

@@ -7,6 +7,7 @@ import type { RequestView } from "@/lib/dto";
 import { usd } from "@/lib/domain/money";
 import { Badge, Button, Card, Input, cn } from "@/components/ui";
 import type { Draft } from "./Negotiation";
+import { ActionError } from "./ActionError";
 
 type Act = (action: string, payload?: unknown) => Promise<unknown>;
 
@@ -26,11 +27,16 @@ export function Copilot({ v, threadId, onUseDraft }: { v: RequestView; threadId?
   async function run(kind: Out["kind"]) {
     setBusy(kind);
     setErr("");
-    const res = await fetch(`/api/ai/${kind}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: v.id, threadId }) });
-    const json = await res.json();
-    setBusy(null);
-    if (!res.ok) return setErr(json.error ?? "Copilot failed");
-    setOut({ kind, ...json });
+    try {
+      const res = await fetch(`/api/ai/${kind}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: v.id, threadId }) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) return setErr(json.error ?? "Copilot failed. Try again in a moment.");
+      setOut({ kind, ...json });
+    } catch {
+      setErr("Network problem. Check your connection and try again.");
+    } finally {
+      setBusy(null);
+    }
   }
 
   const disabled = !threadId;
@@ -158,6 +164,7 @@ export function PrivateLimit({ v, threadId, act, busy }: { v: RequestView; threa
           Save
         </Button>
       </form>
+      <ActionError actions={["limit"]} className="mt-3" />
     </Card>
   );
 }
@@ -173,7 +180,8 @@ export function MoneyTrail({ v }: { v: RequestView }) {
       </div>
       <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
         {[
-          ["Held", v.status === "draft" ? "—" : usd(v.budgetCents)],
+          // The hold is the authorized maximum; it is "held" only while the request is open (after that PayPal captured or released it).
+          [v.status === "open" ? "Held" : "Authorized", v.status === "draft" ? "—" : usd(v.budgetCents)],
           ["Captured", p.capturedCents !== undefined ? usd(p.capturedCents) : "—"],
           ["Refunded", p.refunds.length ? usd(p.refunds.reduce((s, r) => s + r.cents, 0)) : "—"],
           ["Paid to seller", v.status === "completed" && p.payoutCents ? usd(p.payoutCents) : "—"],

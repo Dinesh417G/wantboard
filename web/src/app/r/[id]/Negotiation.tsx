@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowDownRight, ArrowUpRight, Check, Clock, Flag, Loader2, Send, ShieldAlert, Undo2, X } from "lucide-react";
 import type { RequestView } from "@/lib/dto";
 import type { Offer } from "@/lib/types";
 import { diffTerms } from "@/lib/domain/offers";
-import { feeBreakdown, usd } from "@/lib/domain/money";
+import { feeBreakdown, parseDollars, usd } from "@/lib/domain/money";
 import { Badge, Button, Card, Field, Input, Select, Textarea, cn } from "@/components/ui";
+import { ConfirmButton } from "@/components/ConfirmButton";
+import { ActionError } from "./ActionError";
 import { left, useNow } from "./hooks";
 import { Gallery, PhotoPicker } from "@/components/PhotoPicker";
 
@@ -23,6 +25,22 @@ const STATUS_TONE: Record<Offer["status"], "mint" | "neutral" | "rose" | "amber"
   withdrawn: "neutral",
   expired: "amber",
 };
+
+/**
+ * The buyer's view of a seller who does not list this request's category but was invited by the matchmaker (Copilot).
+ * Uses only what the buyer's view already has: the seller's categories and the request's matches.
+ */
+function InvitedTag({ v, thread }: { v: RequestView; thread: Thread }) {
+  if (v.viewerRole !== "buyer" || thread.seller.categories.includes(v.category)) return null;
+  const m = v.matches?.find((x) => x.sellerId === thread.sellerId);
+  if (!m) return null;
+  return (
+    <Badge tone="brand" title={`${m.reason} (match score ${m.score})`}>
+      {m.source === "ai" ? "Invited by AI matchmaker" : "Invited by matchmaker"}
+    </Badge>
+  );
+}
+export { InvitedTag };
 
 export function OfferTimeline({ thread, me, v, act, busy, onCounter }: { thread: Thread; me: "buyer" | "seller"; v: RequestView; act: Act; busy: string | null; onCounter: (o: Offer) => void }) {
   const now = useNow();
@@ -50,6 +68,7 @@ export function OfferTimeline({ thread, me, v, act, busy, onCounter }: { thread:
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="font-medium text-fg">{o.by === "buyer" ? v.buyer.name : thread.seller.name}</span>
                 {mine && <span className="text-dim">(you)</span>}
+                {o.by === "seller" && <InvitedTag v={v} thread={thread} />}
                 <Badge tone={STATUS_TONE[o.status]}>{o.status}</Badge>
                 {o.isFinal && <Badge tone="amber">best & final</Badge>}
                 {o.status === "open" && exp !== null && (
@@ -105,9 +124,20 @@ export function OfferTimeline({ thread, me, v, act, busy, onCounter }: { thread:
               {o.images && o.images.length > 0 && <Gallery urls={o.images} className="mt-3 sm:grid-cols-4" />}
               {actionable && !mine && (
                 <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">
-                  <Button variant="success" size="sm" disabled={!!busy} onClick={() => act("accept", { offerId: o.id, version: o.version })}>
+                  <ConfirmButton
+                    variant="success"
+                    size="sm"
+                    disabled={!!busy || (exp !== null && exp <= 0)}
+                    prompt={
+                      me === "buyer"
+                        ? `Sign v${o.version} at ${usd(o.terms.priceCents)}? PayPal captures it now.`
+                        : `Sign v${o.version} at ${usd(o.terms.priceCents)}? This ends the negotiation.`
+                    }
+                    confirmLabel={`Yes, accept v${o.version}`}
+                    onConfirm={() => act("accept", { offerId: o.id, version: o.version })}
+                  >
                     {busy === "accept" ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Accept v{o.version} & sign
-                  </Button>
+                  </ConfirmButton>
                   {!o.isFinal && (
                     <Button variant="secondary" size="sm" disabled={!!busy} onClick={() => onCounter(o)}>
                       Counter
@@ -127,14 +157,16 @@ export function OfferTimeline({ thread, me, v, act, busy, onCounter }: { thread:
                       You receive <span className="num">{usd(feeBreakdown(o.terms.priceCents, v.myFeeBps).payoutCents)}</span> after delivery
                     </span>
                   )}
+                  <ActionError actions={["accept", "reject"]} className="w-full" />
                 </div>
               )}
               {actionable && mine && (
-                <div className="mt-4 flex items-center gap-2 border-t border-line pt-4 text-xs text-muted">
+                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4 text-xs text-muted">
                   Waiting for {me === "buyer" ? thread.seller.name : v.buyer.name}.
                   <Button variant="ghost" size="sm" className="ml-auto" disabled={!!busy} onClick={() => act("withdraw", { offerId: o.id })}>
                     <Undo2 className="size-3.5" /> Withdraw
                   </Button>
+                  <ActionError actions={["withdraw"]} className="w-full" />
                 </div>
               )}
             </div>
@@ -184,26 +216,42 @@ export function OfferForm({
   onCancel?: () => void;
 }) {
   const [isFinal, setIsFinal] = useState(false);
-  const cents = Math.round(Number(draft.price) * 100);
+  const [priceErr, setPriceErr] = useState("");
+  const priceRef = useRef<HTMLInputElement>(null);
+  // Same parser as the server, so "1,200" and "$1200" work and the payout preview shows for them too.
+  const cents = parseDollars(draft.price) ?? NaN;
   const beyond = limitCents !== undefined && Number.isFinite(cents) && cents > 0 && (role === "buyer" ? cents > limitCents : cents < limitCents);
-  const set = (k: keyof Draft) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+  const set = (k: keyof Draft) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    if (k === "price") setPriceErr("");
     setDraft({ ...draft, [k]: k === "warrantyMonths" || k === "inspectionDays" ? Number(e.target.value) : e.target.value });
+  };
   return (
     <Card className="edge p-5">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault(); // the browser has already enforced required / min / max
+          if (!Number.isFinite(cents) || cents <= 0) {
+            setPriceErr("Enter a valid price, like 120 or 120.50");
+            priceRef.current?.focus();
+            return;
+          }
+          onSubmit(isFinal);
+        }}
+      >
       <div className="flex items-center justify-between">
         <h3 className="font-medium">{title}</h3>
         {onCancel && (
-          <button onClick={onCancel} className="text-xs text-dim hover:text-fg">
+          <button type="button" onClick={onCancel} className="text-xs text-dim hover:text-fg">
             cancel
           </button>
         )}
       </div>
       <div className="mt-4 grid gap-4 sm:grid-cols-3">
-        <Field label="Price (USD)" hint={`Up to ${usd(max)} (PayPal hold)`}>
-          <Input value={draft.price} onChange={set("price")} inputMode="decimal" className="num" required />
+        <Field label="Price (USD)" hint={priceErr ? <span className="text-rose-200">{priceErr}</span> : `Up to ${usd(max)} (PayPal hold)`}>
+          <Input ref={priceRef} value={draft.price} onChange={set("price")} inputMode="decimal" className="num" required aria-invalid={!!priceErr} />
         </Field>
         <Field label="Delivery by">
-          <Input type="date" value={draft.deliveryDate} onChange={set("deliveryDate")} min={new Date().toISOString().slice(0, 10)} />
+          <Input type="date" value={draft.deliveryDate} onChange={set("deliveryDate")} min={new Date().toISOString().slice(0, 10)} required />
         </Field>
         <Field label="Warranty (months)">
           <Input type="number" min={0} max={60} value={draft.warrantyMonths} onChange={set("warrantyMonths")} />
@@ -250,10 +298,12 @@ export function OfferForm({
           <input type="checkbox" checked={isFinal} onChange={(e) => setIsFinal(e.target.checked)} className="accent-amber-400" />
           <Flag className="size-3.5" /> Best & final (no more counters)
         </label>
-        <Button className="ml-auto" disabled={busy} onClick={() => onSubmit(isFinal)}>
+        <Button className="ml-auto" disabled={busy} type="submit">
           {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Send offer
         </Button>
       </div>
+      <ActionError actions={["offer"]} className="mt-3" />
+      </form>
     </Card>
   );
 }
@@ -309,6 +359,7 @@ export function Chat({ thread, me, act, busy, otherName }: { thread: Thread; me:
           <Send className="size-4" />
         </Button>
       </form>
+      <ActionError actions={["message"]} className="mt-3" />
     </Card>
   );
 }

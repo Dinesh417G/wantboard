@@ -20,17 +20,23 @@ const PERKS = [
 
 export default async function ProPage() {
   let me = viewerIn(await read(), await viewerId());
-  // Keep the status honest: re-check PayPal if it's been more than an hour.
-  if (me.pro && Date.now() - Date.parse(me.pro.updatedAt) > 3_600_000) {
+  // Keep the status honest: re-check PayPal if it's been more than an hour (2 minutes while the first payment is still pending).
+  if (me.pro && Date.now() - Date.parse(me.pro.updatedAt) > (me.pro.status === "ACTIVE" ? 3_600_000 : 120_000)) {
     await refreshPro(me.id, me.pro.subscriptionId).catch(() => {});
     me = viewerIn(await read(), me.id);
   }
+  // Only a signed-in, non-demo seller who can actually subscribe needs the PayPal billing plan. Looking it up creates a PayPal
+  // product and plan on first use, so guests, buyers, demo accounts and subscribers must never trigger it.
+  const approved = me.pro?.status === "APPROVED";
+  const canSubscribe = me.id !== GUEST_ID && me.role === "seller" && !me.demo && !isPro(me) && !approved;
   let planId = "";
   let planError = "";
-  try {
-    planId = await proPlanId();
-  } catch (e) {
-    planError = (e as Error).message;
+  if (canSubscribe) {
+    try {
+      planId = await proPlanId();
+    } catch (e) {
+      planError = (e as Error).message;
+    }
   }
   const breakEven = Math.ceil((Number(PRO.priceUsd) * 10000) / (PLATFORM_FEE_BPS - PRO.feeBps));
   const keepOn1000 = (1000 * (PLATFORM_FEE_BPS - PRO.feeBps)) / 10000;
@@ -73,6 +79,11 @@ export default async function ProPage() {
               {me.pro!.nextBillingAt ? ` · next charge ${me.pro!.nextBillingAt.slice(0, 10)}` : ""}. New deals use the {pct(PRO.feeBps)} fee.
             </p>
             <CancelPro />
+          </div>
+        ) : approved ? (
+          <div className="space-y-2">
+            <div className="font-medium text-amber-200">Subscription approved, activation pending.</div>
+            <p className="text-sm text-muted">PayPal approved your subscription; activation is pending. This page updates once PayPal confirms the first payment.</p>
           </div>
         ) : planError ? (
           <p className="text-sm text-rose-200">PayPal Subscriptions isn&apos;t available right now ({planError}).</p>

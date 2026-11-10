@@ -110,6 +110,14 @@ body {
 main {
   overflow-wrap: anywhere;
 }
+/* Controls keep their label whole: with "anywhere" a flex row would squeeze a button down to one letter ("Sav/e").
+   User text inside a control (e.g. a seller name on a thread button) opts back in with [overflow-wrap:anywhere]. */
+main button,
+main input,
+main select,
+main textarea {
+  overflow-wrap: normal;
+}
 
 input[type="date"]::-webkit-calendar-picker-indicator {
   filter: invert(0.8);

@@ -8,8 +8,10 @@ import type { Offer } from "@/lib/types";
 import { usd } from "@/lib/domain/money";
 import { StatusPill } from "@/components/StatusPill";
 import { Badge, Button, Card, cn } from "@/components/ui";
-import { useAct } from "./hooks";
-import { Chat, OfferForm, OfferTimeline, draftFrom, type Draft } from "./Negotiation";
+import { ConfirmButton } from "@/components/ConfirmButton";
+import { ActErrorProvider, useAct } from "./hooks";
+import { ActionError } from "./ActionError";
+import { Chat, InvitedTag, OfferForm, OfferTimeline, draftFrom, type Draft } from "./Negotiation";
 import { Copilot, MoneyTrail, PrivateLimit } from "./Side";
 import { Agent } from "./Agent";
 import { AfterAgreement, AgreementCard, HoldPanel, Stepper } from "./Stages";
@@ -18,8 +20,29 @@ import { Sparkles } from "lucide-react";
 
 const HONOR_MS = 3 * 86_400_000;
 
-export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: RequestView; clientId: string; canSell: boolean; holdApproved?: boolean }) {
-  const { act, busy, error, setError } = useAct(v.id);
+/** The headline money figure in the header card. It must match what PayPal is doing in each status. */
+function moneyHeadline(v: RequestView): { label: string; cents: number } {
+  const p = v.paypal;
+  const refunded = p.refunds.reduce((s, r) => s + r.cents, 0);
+  switch (v.status) {
+    case "draft":
+      return { label: "Max price", cents: v.budgetCents };
+    case "agreed":
+    case "shipped":
+    case "disputed":
+      return { label: "PayPal captured", cents: p.capturedCents ?? v.budgetCents };
+    case "completed":
+      return { label: "Paid to seller", cents: p.payoutCents ?? p.capturedCents ?? v.budgetCents };
+    case "cancelled":
+      return refunded > 0 ? { label: "Refunded", cents: refunded } : { label: "Hold released", cents: v.budgetCents };
+    default:
+      return { label: "PayPal holding", cents: v.budgetCents };
+  }
+}
+
+export function DealRoom({ v, clientId, canSell, signedIn, holdApproved = false }: { v: RequestView; clientId: string; canSell: boolean; signedIn: boolean; holdApproved?: boolean }) {
+  const { act, busy, error, errorAction, setError } = useAct(v.id);
+  const headline = moneyHeadline(v);
   const me = v.viewerRole === "visitor" ? null : v.viewerRole;
   const winnerId = v.agreement?.threadId;
   const [threadId, setThreadId] = useState<string | undefined>(winnerId ?? v.threads[0]?.id);
@@ -49,6 +72,26 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
     setDraft(draftFrom(o));
   }
 
+  // Why this viewer cannot make an offer (the guest sign-in prompt is rendered separately).
+  const offerGate: string | null =
+    v.status === "draft" || me === "buyer"
+      ? null
+      : v.status !== "open"
+        ? me === null || !thread
+          ? v.status === "cancelled"
+            ? "This request was cancelled, so it no longer takes offers."
+            : "This request is closed: a deal was agreed, so it no longer takes offers."
+          : null
+        : me === null
+          ? signedIn
+            ? "Only seller accounts can make offers. You are signed in as a buyer, and offers on a request are private between its buyer and each seller."
+            : null
+          : !canSell
+            ? `Only sellers who list “${v.category}” can make offers on this request.`
+            : !v.canOffer
+              ? `The buyer only accepts offers from sellers in their area (${v.reachText}), so you can't make an offer here.`
+              : null;
+
   const sortedThreads = useMemo(
     () => [...v.threads].sort((a, b) => (a.offers.at(-1)?.terms.priceCents ?? 1e12) - (b.offers.at(-1)?.terms.priceCents ?? 1e12)),
     [v.threads],
@@ -60,10 +103,11 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
   }
 
   return (
+    <ActErrorProvider value={{ text: error, action: errorAction }}>
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
       {/* Header */}
       <div className="flex flex-wrap items-start gap-6">
-        <div className="min-w-0 flex-1">
+        <div className="w-full min-w-0 sm:w-auto sm:flex-1">
           <div className="flex flex-wrap items-center gap-2 text-xs text-dim">
             <Link href="/board" className="hover:text-fg">
               Board
@@ -94,13 +138,13 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
             )}
           </div>
         </div>
-        <Card className="edge flex items-center gap-4 p-4">
+        <Card className="edge flex w-full items-center gap-4 p-4 sm:w-auto">
           <div className="grid size-11 place-items-center rounded-xl bg-paypal/20 text-sky-200">
             <Lock className="size-5" />
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-dim">{v.status === "draft" ? "Max price" : "PayPal holding"}</div>
-            <div className="num text-2xl font-semibold">{usd(v.paypal.capturedCents ?? v.budgetCents)}</div>
+            <div className="text-[11px] uppercase tracking-wider text-dim">{headline.label}</div>
+            <div className="num text-2xl font-semibold">{usd(headline.cents)}</div>
             {v.status === "open" && v.paypal.authorizedAt && (
               <div className="text-[11px] text-dim">
                 guaranteed to {new Date(Date.parse(v.paypal.authorizedAt) + HONOR_MS).toISOString().slice(0, 10)}
@@ -115,8 +159,8 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
       </div>
 
       {error && (
-        <div className="mt-6 flex items-center gap-2 rounded-xl border border-rose/30 bg-rose/10 p-3 text-sm text-rose-100">
-          <XCircle className="size-4 shrink-0" /> {error}
+        <div role="alert" className="mt-6 flex items-center gap-2 rounded-xl border border-rose/30 bg-rose/10 p-3 text-sm text-rose-100">
+          <XCircle className="size-4 shrink-0" /> <span className="min-w-0">{error}</span>
           <button className="ml-auto text-xs text-rose-200/70 hover:text-rose-100" onClick={() => setError("")}>
             dismiss
           </button>
@@ -149,11 +193,11 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
                   {v.matches[0].source === "ai" ? "AI-generated" : "Offline heuristic"}
                 </Badge>
               </div>
-              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {v.matches
                   .filter((m) => me === "buyer" || m.sellerId === v.mySellerId)
                   .map((m) => (
-                    <div key={m.sellerId} className="flex items-center gap-3 rounded-xl border border-line bg-white/[0.02] p-3">
+                    <div key={m.sellerId} className="flex min-w-0 items-center gap-3 rounded-xl border border-line bg-white/[0.02] p-3">
                       <span className="num grid size-10 shrink-0 place-items-center rounded-lg bg-brand/15 text-sm text-violet-100">{m.score}</span>
                       <span className="min-w-0 text-sm">
                         <span className="block font-medium">{m.sellerName}</span>
@@ -197,16 +241,17 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
                           setCountering(null);
                         }}
                         className={cn(
-                          "glass flex items-center gap-3 rounded-2xl px-4 py-2.5 text-left text-sm transition",
+                          "glass flex max-w-full items-center gap-3 rounded-2xl px-4 py-2.5 text-left text-sm transition",
                           t.id === thread?.id ? "border-brand/50 bg-brand/[0.1]" : "hover:bg-white/[0.06]",
                         )}
                       >
                         <span>
-                          <span className="block font-medium">{t.seller.name}</span>
+                          <span className="block font-medium [overflow-wrap:anywhere]">{t.seller.name}</span>
                           <span className="block text-[11px] text-dim">
                             {t.offers.length} version{t.offers.length === 1 ? "" : "s"}
                             {t.messages.some((m) => m.flags.length) && <span className="text-amber-200"> · flagged</span>}
                           </span>
+                          <InvitedTag v={v} thread={t} />
                         </span>
                         {o && <span className="num font-semibold">{usd(o.terms.priceCents)}</span>}
                       </button>
@@ -216,12 +261,13 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
               )}
 
               {thread && me && (
-                <div className="flex items-center gap-2 text-sm text-muted">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
                   with{" "}
                   <Link className="text-fg hover:underline" href={`/u/${me === "buyer" ? thread.seller.handle : v.buyer.handle}`}>
                     {me === "buyer" ? thread.seller.name : v.buyer.name}
                   </Link>
                   {me === "buyer" && <span className="text-dim">· {thread.seller.city}</span>}
+                  <InvitedTag v={v} thread={thread} />
                 </div>
               )}
 
@@ -232,7 +278,7 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
                   Live. Sellers in “{v.category}” can see your request and send offers here.
                 </Card>
               )}
-              {me === null && (
+              {me === null && v.status === "open" && !signedIn && (
                 <Card className="flex flex-wrap items-center gap-3 p-6 text-sm text-muted">
                   Sellers can make offers here. Buyers see every offer on their own requests.
                   <Link href={`/login?next=/r/${v.id}`} className="ml-auto rounded-xl bg-brand/20 px-4 py-2 text-violet-100 hover:bg-brand/30">
@@ -240,6 +286,7 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
                   </Link>
                 </Card>
               )}
+              {offerGate && <Card className="p-5 text-sm text-muted">{offerGate}</Card>}
 
               {showForm && me && (
                 <OfferForm
@@ -266,10 +313,20 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
           )}
 
           {me === "buyer" && (v.status === "open" || v.status === "draft") && (
-            <div className="flex justify-end">
-              <Button variant="danger" size="sm" disabled={!!busy} onClick={() => act("cancel")}>
-                {v.status === "open" ? "Cancel request & release PayPal hold" : "Cancel request"}
-              </Button>
+            <div className="space-y-2">
+              <div className="flex justify-end">
+                <ConfirmButton
+                  variant="danger"
+                  size="sm"
+                  disabled={!!busy}
+                  prompt={v.status === "open" ? "Cancel this request and release the PayPal hold? Sellers lose access." : "Cancel this request?"}
+                  confirmLabel="Yes, cancel request"
+                  onConfirm={() => act("cancel")}
+                >
+                  {v.status === "open" ? "Cancel request & release PayPal hold" : "Cancel request"}
+                </ConfirmButton>
+              </div>
+              <ActionError actions={["cancel"]} />
             </div>
           )}
         </div>
@@ -292,5 +349,6 @@ export function DealRoom({ v, clientId, canSell, holdApproved = false }: { v: Re
         </aside>
       </div>
     </div>
+    </ActErrorProvider>
   );
 }
