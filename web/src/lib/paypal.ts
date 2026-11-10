@@ -165,6 +165,19 @@ export function voidAuthorization(authorizationId: string) {
 }
 
 /** Full refund when cents is omitted, otherwise a partial refund. */
+/** PayPal's view of a capture: Seller Protection eligibility and the fee/net split PayPal actually applied. */
+export async function captureDetails(captureId: string) {
+  const c = await call("GET", `/v2/payments/captures/${captureId}`);
+  const b = c.seller_receivable_breakdown ?? {};
+  const cents = (m: { value?: string } | undefined) => (m?.value !== undefined ? Math.round(Number(m.value) * 100) : undefined);
+  return {
+    status: String(c.seller_protection?.status ?? "UNKNOWN"),
+    categories: Array.isArray(c.seller_protection?.dispute_categories) ? (c.seller_protection.dispute_categories as string[]) : [],
+    paypalFeeCents: cents(b.paypal_fee),
+    netCents: cents(b.net_amount),
+  };
+}
+
 export async function refundCapture(captureId: string, note: string, cents?: number) {
   const body: Record<string, unknown> = { note_to_payer: note.slice(0, 255) };
   if (cents !== undefined) body.amount = money(cents);

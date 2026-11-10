@@ -169,6 +169,51 @@ export function PrivateLimit({ v, threadId, act, busy }: { v: RequestView; threa
   );
 }
 
+const PROTECTION: Record<string, { label: string; tone: "mint" | "amber" | "rose" }> = {
+  ELIGIBLE: { label: "Eligible", tone: "mint" },
+  PARTIALLY_ELIGIBLE: { label: "Partially eligible", tone: "amber" },
+  NOT_ELIGIBLE: { label: "Not eligible", tone: "rose" },
+};
+
+/** Seller Protection + where the captured money goes, with PayPal's own fee from the capture record. */
+function PayPalSplit({ p }: { p: RequestView["paypal"] }) {
+  const pr = p.protection!;
+  const badge = PROTECTION[pr.status] ?? { label: pr.status.toLowerCase().replace(/_/g, " "), tone: "amber" as const };
+  const captured = p.capturedCents ?? 0;
+  const rows: [string, number | undefined, string?][] = [
+    ["Buyer paid (captured)", captured],
+    ["PayPal fee (from PayPal)", pr.paypalFeeCents, "-"],
+    ["Clinch fee", p.feeCents],
+    ["Seller payout", p.payoutCents],
+  ];
+  const clinchNet = pr.paypalFeeCents !== undefined && p.payoutCents !== undefined ? captured - pr.paypalFeeCents - p.payoutCents : undefined;
+  return (
+    <div className="mt-4 rounded-xl border border-line bg-white/[0.02] p-3 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-dim">PayPal Seller Protection</span>
+        <Badge tone={badge.tone}>{badge.label}</Badge>
+      </div>
+      {pr.categories.length > 0 && (
+        <p className="mt-1 text-[11px] text-dim">Covers: {pr.categories.map((c) => c.toLowerCase().replace(/_/g, " ")).join(", ")}</p>
+      )}
+      <dl className="mt-3 space-y-1.5">
+        {rows.map(([k, v, sign]) => (
+          <div key={k} className="flex justify-between gap-3">
+            <dt className="text-muted">{k}</dt>
+            <dd className="num text-fg">{v === undefined ? "—" : `${sign ?? ""}${usd(v)}`}</dd>
+          </div>
+        ))}
+        {clinchNet !== undefined && (
+          <div className="flex justify-between gap-3 border-t border-line pt-1.5">
+            <dt className="text-muted">Clinch keeps (fee minus PayPal fee)</dt>
+            <dd className="num text-fg">{usd(clinchNet)}</dd>
+          </div>
+        )}
+      </dl>
+    </div>
+  );
+}
+
 export function MoneyTrail({ v }: { v: RequestView }) {
   const p = v.paypal;
   return (
@@ -192,6 +237,7 @@ export function MoneyTrail({ v }: { v: RequestView }) {
           </div>
         ))}
       </dl>
+      {p.protection && <PayPalSplit p={p} />}
       <ol className="mt-5 space-y-3 border-l border-line pl-4 text-xs">
         {[...v.events].reverse().map((e, i) => (
           <li key={i} className="relative">

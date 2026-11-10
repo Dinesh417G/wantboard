@@ -14,6 +14,8 @@ export type PartyLite = Pick<Party, "id" | "name" | "handle" | "city" | "role" |
  */
 export type PayPalView = {
   capturedCents?: number;
+  protection?: NonNullable<WantRequest["paypal"]["protection"]>;
+  feeCents?: number;
   payoutCents?: number;
   payoutStatus?: string;
   refunds: { id?: string; cents: number; status: string }[];
@@ -121,6 +123,7 @@ export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView 
       capturedCents: p.capturedCents,
       payoutCents: p.payoutCents,
       payoutStatus: p.payoutStatus,
+      ...(insider ? { protection: p.protection, feeCents: p.feeCents } : {}),
       refunds: p.refunds.map((f) => (insider ? { id: f.id, cents: f.cents, status: f.status } : { cents: f.cents, status: f.status })),
       ...(inDeal ? { authorizedAt: p.authorizedAt, reauthorizations: p.reauthorizations } : {}),
       ...(insider ? { captureId: p.captureId, payoutBatchId: p.payoutBatchId, payoutTo: hidePayTo(p.payoutTo), dispute: p.dispute } : {}),

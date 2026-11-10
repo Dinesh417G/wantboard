@@ -2,7 +2,7 @@
 // calls PayPal (or simulates it for sample deals, and says so), and appends to the money trail.
 import "server-only";
 import { canServe, reachShort } from "./domain/location";
-import { acceptDisputeClaim, addTracking, cancelUnclaimedPayout, CARRIERS, disputesForCapture, getDispute, getPayout, provideDisputeEvidence, reauthorize, type Carrier, type PayPalDispute } from "./paypal";
+import { acceptDisputeClaim, addTracking, cancelUnclaimedPayout, captureDetails, CARRIERS, disputesForCapture, getDispute, getPayout, provideDisputeEvidence, reauthorize, type Carrier, type PayPalDispute } from "./paypal";
 import { PayPalError, authorizeOrder, captureAuthorization, createAuthorizeOrder, orderStatus, payoutSeller, refundCapture, voidAuthorization } from "./paypal";
 import { Conflict, Forbidden, NotFound, demoOnRealDeal, getRequest, id, log, mutate, nowIso, read, sha256 } from "./store";
 import { canonical, diffTerms, summarizeDiff, validateTerms, type Terms } from "./domain/offers";
@@ -402,6 +402,7 @@ export async function acceptOffer(requestId: string, meId: string, b: Record<str
     else await flagForSupport(requestId, `PayPal captured ${usd(priceCents)} (capture ${captureId}) but the deal could not record it (${(e as Error).message.slice(0, 120)}).`);
     throw e;
   }
+  await syncCaptureDetails(requestId);
   await mail(requestId, x.seller, `Deal agreed: ${x.title}`, `Your offer of ${usd(x.price)} was accepted and PayPal has captured the payment. Ship the item and mark it shipped in the deal room.`);
   await mail(requestId, x.buyer, `Agreement signed: ${x.title}`, `PayPal captured ${usd(x.price)}. The seller is paid only after you receive and inspect the item.`);
   return { status: x.status };
@@ -646,10 +647,35 @@ export async function assertParticipant(requestId: string, meId: string) {
 }
 
 /** Auto-release when the inspection window has passed. Safe to call repeatedly. */
+const PROTECTION_TEXT: Record<string, string> = {
+  ELIGIBLE: "eligible",
+  PARTIALLY_ELIGIBLE: "partially eligible",
+  NOT_ELIGIBLE: "not eligible",
+};
+
+/** Read Seller Protection + PayPal's fee/net for the capture once and keep it on the deal. Best effort: never throws. */
+async function syncCaptureDetails(requestId: string) {
+  try {
+    const r = getRequest(await read(), requestId);
+    const cap = r.paypal.captureId;
+    if (r.sample || !cap || cap === "SIMULATED" || r.paypal.protection) return;
+    const d = await captureDetails(cap);
+    await commit(requestId, (x) => {
+      if (x.paypal.protection || x.paypal.captureId !== cap) return;
+      x.paypal.protection = { ...d, checkedAt: nowIso() };
+      const fee = d.paypalFeeCents !== undefined ? `; PayPal fee ${usd(d.paypalFeeCents)}, net ${usd(d.netCents ?? 0)}` : "";
+      log(x, `PayPal Seller Protection: ${PROTECTION_TEXT[d.status] ?? d.status.toLowerCase()}${d.categories.length ? ` (${d.categories.join(", ").toLowerCase().replace(/_/g, " ")})` : ""}${fee}.`, "money");
+    });
+  } catch (e) {
+    console.warn("[capture-details]", (e as Error).message);
+  }
+}
+
 export async function tick(requestId: string) {
   let r = getRequest(await read(), requestId);
   // Check PayPal first: a dispute opened there must stop the automatic payout.
   if (["agreed", "shipped", "disputed", "completed"].includes(r.status)) {
+    await syncCaptureDetails(requestId);
     await syncDisputes(requestId);
     r = getRequest(await read(), requestId);
   }

@@ -155,6 +155,8 @@ export type WantRequest = {
     heldSince?: string;
     captureId?: string;
     capturedCents?: number;
+    /** From GET /v2/payments/captures/{id}: PayPal Seller Protection and the fee/net PayPal applied to the capture. */
+    protection?: { status: string; categories: string[]; paypalFeeCents?: number; netCents?: number; checkedAt: string };
     refunds: { id: string; cents: number; status: string }[];
     payoutBatchId?: string;
     payoutItemId?: string;
