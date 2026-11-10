@@ -28,7 +28,9 @@ Built for the [PayPal AI Hackathon 2026](https://paypalaihackathon.devpost.com/)
 
 Live demo: **https://clinchdeal.in** (PayPal sandbox; no real money moves).
 
-1. You start as **Maya Chen** (buyer). Use the switcher in the top-right corner to become any buyer or seller.
+1. Open **https://clinchdeal.in/login** and, under **"Just looking? Try a demo account"**, click **Maya Chen**
+   (buyer). One click, no email. Switch to any other demo buyer or seller from the account menu in the top-right
+   corner. Demo accounts act on demo deals only; requests posted by real accounts are view-only for them.
 2. **Post a need** with photos, then click the PayPal button and log in with the sandbox buyer below.
    PayPal *authorizes* (holds) the max price.
 3. The **copilot matches sellers** and invites them. Switch to a matched seller, open **Dashboard**, and send an offer.
