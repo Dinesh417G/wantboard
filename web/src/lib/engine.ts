@@ -598,6 +598,7 @@ export async function release(requestId: string, meId: string | null) {
   const releasable = (x: WantRequest) => {
     if (x.status !== "shipped") throw new Conflict("nothing to release");
     if (hasOpenPayPalDispute(x)) throw new Conflict("a PayPal dispute is open; the payout waits until PayPal resolves it");
+    if (isReversed(x)) throw new Conflict("PayPal reversed this payment; the payout is paused for support review");
     if (x.paypal.payoutBatchId) throw new Conflict("the payout was already sent");
     if (!meId && x.delivery!.inspectionEndsAt > nowIso()) throw new Conflict("inspection window still running");
   };
@@ -620,7 +621,7 @@ export async function release(requestId: string, meId: string | null) {
     x.paypal.payoutTo = to;
     x.paypal.payoutBatchId = batch;
     // PayPal has paid. If a dispute opened while it was in flight, do not rewrite the deal's state: record the payout and flag it.
-    if (x.status !== "shipped" || hasOpenPayPalDispute(x)) {
+    if (x.status !== "shipped" || hasOpenPayPalDispute(x) || isReversed(x)) {
       log(x, `Payout sent while the deal was ${x.status}${hasOpenPayPalDispute(x) ? " with a PayPal dispute open" : ""}: PayPal Payouts sent ${usd(payout)} to ${seller.name} via ${to} (batch ${batch}, ${status}). The deal was NOT marked completed. Support review needed.`, "warn");
       return { status: x.status, completed: false };
     }
@@ -653,22 +654,61 @@ const PROTECTION_TEXT: Record<string, string> = {
   NOT_ELIGIBLE: "not eligible",
 };
 
-/** Read Seller Protection + PayPal's fee/net for the capture once and keep it on the deal. Best effort: never throws. */
+const CAPTURE_RECHECK_MS = 5 * 60_000;
+const UNPAID = ["agreed", "shipped", "disputed"];
+
+/**
+ * Read Seller Protection + PayPal's fee/net for the capture and keep it on the deal. While the seller is not paid yet,
+ * re-read it at most every 5 minutes so a reversal the webhook missed still stops the payout. One GET (15 s timeout
+ * worst case) per call. Best effort: never throws.
+ */
 async function syncCaptureDetails(requestId: string) {
   try {
     const r = getRequest(await read(), requestId);
     const cap = r.paypal.captureId;
-    if (r.sample || !cap || cap === "SIMULATED" || r.paypal.protection) return;
-    const d = await captureDetails(cap);
+    if (r.sample || !cap || cap === "SIMULATED" || r.paypal.reversal) return;
+    const seen = r.paypal.protection;
+    if (seen && (!UNPAID.includes(r.status) || Date.now() - Date.parse(seen.checkedAt) < CAPTURE_RECHECK_MS)) return;
+    const { captureStatus, ...d } = await captureDetails(cap);
     await commit(requestId, (x) => {
-      if (x.paypal.protection || x.paypal.captureId !== cap) return;
+      if (x.paypal.captureId !== cap) return;
+      const first = !x.paypal.protection;
       x.paypal.protection = { ...d, checkedAt: nowIso() };
+      if (!first) return;
       const fee = d.paypalFeeCents !== undefined ? `; PayPal fee ${usd(d.paypalFeeCents)}, net ${usd(d.netCents ?? 0)}` : "";
       log(x, `PayPal Seller Protection: ${PROTECTION_TEXT[d.status] ?? d.status.toLowerCase()}${d.categories.length ? ` (${d.categories.join(", ").toLowerCase().replace(/_/g, " ")})` : ""}${fee}.`, "money");
     });
+    // Refunded/declined/failed with no refund made by Clinch = PayPal took the money back.
+    const ours = r.paypal.refunds.length > 0;
+    if ((["REFUNDED", "PARTIALLY_REFUNDED"].includes(captureStatus) && !ours) || ["DECLINED", "FAILED", "REVERSED"].includes(captureStatus)) {
+      await applyCaptureReversal(requestId, "status-check", `capture status ${captureStatus}`);
+    }
   } catch (e) {
     console.warn("[capture-details]", (e as Error).message);
   }
+}
+
+export const isReversed = (r: WantRequest) => !!r.paypal.reversal;
+
+/** PayPal reversed the captured payment: pause payout/settlement, tell support and the seller. Idempotent. */
+export async function applyCaptureReversal(requestId: string, source: "webhook" | "status-check", detail: string) {
+  const out = await commit(requestId, (r) => {
+    if (r.paypal.reversal) return null;
+    r.paypal.reversal = { at: nowIso(), source, detail: detail.slice(0, 200) };
+    const paid = r.status === "completed" || !!r.paypal.payoutBatchId;
+    log(
+      r,
+      paid
+        ? `PayPal reversed the captured payment (${detail}) after the seller was paid. Support review needed.`
+        : `PayPal reversed the captured payment (${detail}). The seller payout is paused until Clinch support reviews it.`,
+      "warn",
+    );
+    return { paid, seller: r.agreement ? r.threads.find((t) => t.id === r.agreement!.threadId)?.sellerId : undefined, title: r.title };
+  });
+  if (!out) return { changed: false };
+  adminAlert(`PayPal payment reversed${out.paid ? " after payout" : ""}: ${out.title}`, { Request: requestId, Source: source, Detail: detail }, `${siteUrl()}/r/${requestId}`);
+  if (out.seller && !out.paid) await mail(requestId, out.seller, `Payout paused: ${out.title}`, `PayPal reversed the buyer's payment for this deal, so your payout is paused. Clinch support will contact you.`);
+  return { changed: true };
 }
 
 export async function tick(requestId: string) {
@@ -679,7 +719,7 @@ export async function tick(requestId: string) {
     await syncDisputes(requestId);
     r = getRequest(await read(), requestId);
   }
-  if (r.status === "shipped" && r.delivery && r.delivery.inspectionEndsAt <= nowIso() && !hasOpenPayPalDispute(r)) {
+  if (r.status === "shipped" && r.delivery && r.delivery.inspectionEndsAt <= nowIso() && !hasOpenPayPalDispute(r) && !isReversed(r)) {
     // Another tab or a webhook may be paying out right now; that is not an error for this caller.
     return release(requestId, null).catch(async (e) => {
       if (e instanceof Conflict) return { status: getRequest(await read(), requestId).status };
@@ -740,6 +780,7 @@ export async function acceptSettlement(requestId: string, meId: string) {
   const settleable = (x: WantRequest) => {
     if (x.status !== "disputed" || !x.dispute?.proposal) throw new Conflict("no settlement to accept");
     if (hasOpenPayPalDispute(x)) throw new Conflict("A PayPal dispute is open on this payment. It has to be resolved in PayPal first.");
+    if (isReversed(x)) throw new Conflict("PayPal reversed this payment. Clinch support will settle this deal.");
     if (x.paypal.payoutBatchId) throw new Conflict("A payout was already sent for this deal. Contact Clinch support.");
     if (x.dispute.proposal.refundCents > x.paypal.capturedCents!) throw new Conflict("The refund can't exceed what the buyer paid.");
     return { refundCents: x.dispute.proposal.refundCents, paid: x.paypal.capturedCents!, feeBps: x.paypal.feeBps, captureId: x.paypal.captureId, title: x.title };

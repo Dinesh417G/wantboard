@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { disputedCaptureIds, getDispute, verifyWebhook } from "@/lib/paypal";
 import { mutate, log, read } from "@/lib/store";
-import { applyPayoutStatus, applyPayPalDispute } from "@/lib/engine";
+import { applyCaptureReversal, applyPayoutStatus, applyPayPalDispute } from "@/lib/engine";
 import { refreshPro } from "@/lib/pro";
 import type { WantRequest } from "@/lib/types";
 
@@ -38,6 +38,13 @@ export async function POST(req: Request) {
     if (type.startsWith("CUSTOMER.DISPUTE.") && res.dispute_id) {
       const r = await findRequest(disputedCaptureIds(res));
       if (r) await applyPayPalDispute(r.id, await getDispute(res.dispute_id));
+    }
+    // PayPal took a captured payment back (chargeback, bank reversal). The resource is usually the reversal (refund)
+    // record; its "up" link points at the original capture.
+    if (type === "PAYMENT.CAPTURE.REVERSED") {
+      const up = (Array.isArray(res.links) ? res.links : []).map((l: { href?: string }) => /\/captures\/([^/?]+)/.exec(String(l?.href ?? ""))?.[1]);
+      const r = await findRequest([res.id, ...up, res.invoice_id, res.custom_id]);
+      if (r) await applyCaptureReversal(r.id, "webhook", `PayPal event ${event.id ?? type}${res.reason_code ? `, reason ${res.reason_code}` : ""}`);
     }
     // Clinch Pro subscriptions (activated, cancelled, suspended, renewed...).
     const subId = type.startsWith("BILLING.SUBSCRIPTION.") ? res.id : type === "PAYMENT.SALE.COMPLETED" ? res.billing_agreement_id : undefined;

@@ -171,6 +171,7 @@ export async function captureDetails(captureId: string) {
   const b = c.seller_receivable_breakdown ?? {};
   const cents = (m: { value?: string } | undefined) => (m?.value !== undefined ? Math.round(Number(m.value) * 100) : undefined);
   return {
+    captureStatus: String(c.status ?? ""),
     status: String(c.seller_protection?.status ?? "UNKNOWN"),
     categories: Array.isArray(c.seller_protection?.dispute_categories) ? (c.seller_protection.dispute_categories as string[]) : [],
     paypalFeeCents: cents(b.paypal_fee),

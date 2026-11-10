@@ -157,6 +157,8 @@ export type WantRequest = {
     capturedCents?: number;
     /** From GET /v2/payments/captures/{id}: PayPal Seller Protection and the fee/net PayPal applied to the capture. */
     protection?: { status: string; categories: string[]; paypalFeeCents?: number; netCents?: number; checkedAt: string };
+    /** PayPal reversed the captured payment (chargeback, bank reversal, failed funding). Pauses payout and settlement. */
+    reversal?: { at: string; source: "webhook" | "status-check"; detail: string };
     refunds: { id: string; cents: number; status: string }[];
     payoutBatchId?: string;
     payoutItemId?: string;
