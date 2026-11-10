@@ -1,9 +1,18 @@
+import { timingSafeEqual } from "node:crypto";
 import { body, handle } from "@/lib/http";
 import { viewerId } from "@/lib/viewer";
 import * as E from "@/lib/engine";
-import { NotFound } from "@/lib/store";
+import { NotFound, sha256 } from "@/lib/store";
 
 type Ctx = { params: Promise<{ id: string; action: string }> };
+
+/** A scheduler may call tick with the shared secret instead of a session. Only honoured when CRON_SECRET is set. */
+function cronOk(req: Request) {
+  const secret = process.env.CRON_SECRET;
+  const given = req.headers.get("x-cron-secret");
+  if (!secret || !given) return false;
+  return timingSafeEqual(Buffer.from(sha256(secret)), Buffer.from(sha256(given)));
+}
 
 /** One endpoint per deal action. The engine checks role and state for each. */
 export const POST = handle(async (req: Request, { params }: Ctx) => {
@@ -32,6 +41,8 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
     case "release":
       return E.release(id, me);
     case "tick":
+      // tick can release a payout and renew a hold: a participant in this deal (or the cron secret) only.
+      if (!cronOk(req)) await E.assertParticipant(id, me);
       return E.tick(id);
     case "dispute":
       return E.openDispute(id, me, b);

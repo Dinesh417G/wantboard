@@ -160,8 +160,15 @@ export type WantRequest = {
     payoutItemId?: string;
     /** Latest PayPal payout item status (SUCCESS, PENDING, UNCLAIMED, FAILED, RETURNED...). */
     payoutStatus?: string;
+    /** Payout retries so far. Persisted BEFORE each retry is sent: retry n uses key payout-<request>-<n>, the first payout key payout-<request>. */
     payoutAttempts?: number;
     payoutCheckedAt?: string;
+    /**
+     * A money step that has a PayPal call in flight (capture, void, refund, payout). Written inside the serialized
+     * commit BEFORE the call, so a second request cannot start a conflicting step; cleared when the step ends.
+     * A marker older than two minutes is treated as dead (the process that set it died) and can be taken over.
+     */
+    inflight?: { op: "capture" | "void" | "refund" | "payout" | "settle"; ref: string; token: string; at: string };
     payoutTo?: string;
     /** A dispute the buyer opened inside PayPal (separate from Clinch's own dispute flow). */
     dispute?: {

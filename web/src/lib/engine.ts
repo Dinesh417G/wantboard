@@ -58,6 +58,46 @@ function commit<T>(requestId: string, fn: (r: WantRequest, db: Db) => T): Promis
   });
 }
 
+// ---------- In-flight money steps ----------
+// A PayPal call sits between "check the state" and "write the result". To keep two requests from both passing the
+// check, every money step (1) re-checks its precondition and claims a marker inside one serialized commit(),
+// (2) calls PayPal, (3) re-checks again and clears the marker in the commit that records the result.
+// Other writers that would change what the step relies on call notBusy() and back off.
+
+const INFLIGHT_MS = 2 * 60_000;
+type Inflight = NonNullable<WantRequest["paypal"]["inflight"]>;
+
+const inflightOf = (r: WantRequest): Inflight | undefined => {
+  const m = r.paypal.inflight;
+  return m && Date.now() - Date.parse(m.at) < INFLIGHT_MS ? m : undefined;
+};
+
+/** Run inside commit(): refuse while a money step is running on this deal. */
+function notBusy(r: WantRequest) {
+  if (inflightOf(r)) throw new Conflict("A payment step on this deal is still running. Try again in a moment.");
+}
+
+/** Run inside commit(): take the marker (a stale one is taken over) and return this step's token. */
+function claim(r: WantRequest, op: Inflight["op"], ref: string): string {
+  notBusy(r);
+  const token = id("k");
+  r.paypal.inflight = { op, ref, token, at: nowIso() };
+  return token;
+}
+
+/** The PayPal call failed: give the marker back (only our own). */
+async function unclaim(requestId: string, token: string) {
+  await commit(requestId, (r) => {
+    if (r.paypal.inflight?.token === token) delete r.paypal.inflight;
+  }).catch((e) => console.warn("[unclaim]", (e as Error).message));
+}
+
+/** PayPal moved money but the deal could not record it: leave a loud trail for support instead of guessing. */
+async function flagForSupport(requestId: string, text: string) {
+  await commit(requestId, (r) => log(r, `${text} Support review needed.`, "warn")).catch((e) => console.error("[flag]", (e as Error).message));
+  adminAlert(`Support review needed: ${requestId}`, { Request: requestId, What: text }, `${siteUrl()}/r/${requestId}`);
+}
+
 function parseTerms(b: Record<string, unknown>): Terms {
   const priceCents = parseDollars(b.price);
   if (priceCents === null) throw new BadInput("Enter a valid price, like 120 or 120.50");
@@ -197,6 +237,9 @@ export async function makeOffer(requestId: string, meId: string, b: Record<strin
   const ttlHours = Math.min(336, Math.max(1, Number(b.ttlHours ?? OFFER_TTL_HOURS)));
 
   return commit(requestId, (r, db) => {
+    // Re-check on the fresh copy: the request may have been cancelled or agreed since the pre-read above.
+    if (r.status !== "open") throw new Conflict("this request is not taking offers");
+    notBusy(r); // an acceptance or cancellation is mid-PayPal-call: don't change the offers under it
     let thread: Thread;
     let by: "buyer" | "seller";
     if (r.buyerId === meId) {
@@ -250,6 +293,7 @@ export function respondOffer(requestId: string, meId: string, b: Record<string, 
     const o = t?.offers.find((x) => x.id === b.offerId);
     if (!t || !o) throw new NotFound("offer not found");
     if (o.status !== "open") throw new Conflict("offer is no longer open");
+    notBusy(r); // the offer may be the one being captured right now
     const myRole = r.buyerId === meId ? "buyer" : t.sellerId === meId ? "seller" : null;
     if (!myRole) throw new Forbidden("not your negotiation");
     if (action === "withdraw" && o.by !== myRole) throw new Forbidden("you can only withdraw your own offer");
@@ -274,48 +318,84 @@ export async function acceptOffer(requestId: string, meId: string, b: Record<str
   if (o.by === myRole) throw new Forbidden("the other side has to accept your offer");
   if (o.status !== "open" || o.id !== t.offers.at(-1)?.id || o.version !== Number(b.version))
     throw new Conflict("That offer changed or expired. Review the latest version before accepting.");
+  if (!c.r.sample && !c.r.paypal.authorizationId) throw new Conflict("no PayPal hold on this request");
 
+  const version = o.version;
+  const priceCents = o.terms.priceCents;
+  const offerKey = `${o.id}-v${version}`;
   const feeBps = feeBpsFor(c.db.parties.find((p) => p.id === t.sellerId));
-  const fees = feeBreakdown(o.terms.priceCents, feeBps);
+  const fees = feeBreakdown(priceCents, feeBps);
+
+  // Everything above ran on a snapshot. This runs on the fresh copy, both when claiming and when recording.
+  const stillOpen = (r: WantRequest) => {
+    if (r.status !== "open" || r.paypal.captureId) throw new Conflict("this request is not open");
+    const thread = r.threads.find((x) => x.id === t.id);
+    const offer = thread?.offers.find((x) => x.id === o.id);
+    if (!thread || !offer) throw new NotFound("offer not found");
+    if (offer.status !== "open" || offer.id !== thread.offers.at(-1)?.id || offer.version !== version)
+      throw new Conflict("That offer changed or expired. Review the latest version before accepting.");
+    return { thread, offer };
+  };
+
+  // 1. Claim: only one acceptance (and no cancellation) can be in flight; a second one is refused before it reaches PayPal.
+  const claimed = await commit(requestId, (r) => {
+    stillOpen(r);
+    return { token: claim(r, "capture", offerKey), authorizationId: r.paypal.authorizationId };
+  });
+
+  // 2. Capture. The key names this offer id + version: a retry dedups at PayPal, another offer can't reuse this capture.
   let captureId = "SIMULATED";
   let captureStatus = "COMPLETED";
   if (!c.r.sample) {
-    if (!c.r.paypal.authorizationId) throw new Conflict("no PayPal hold on this request");
-    const authId = (await freshHold(requestId)) ?? c.r.paypal.authorizationId;
-    const cap = await captureAuthorization(authId, o.terms.priceCents, c.r.id);
-    captureId = cap.captureId;
-    captureStatus = cap.status;
+    try {
+      const authId = (await freshHold(requestId)) ?? claimed.authorizationId!;
+      const cap = await captureAuthorization(authId, priceCents, c.r.id, offerKey);
+      captureId = cap.captureId;
+      captureStatus = cap.status;
+    } catch (e) {
+      await unclaim(requestId, claimed.token);
+      throw e;
+    }
   }
 
-  return commit(requestId, (r, db) => {
-    const thread = threadOf(r, t.id);
-    const offer = thread.offers.find((x) => x.id === o.id)!;
-    offer.status = "accepted";
-    for (const other of r.threads) for (const x of other.offers) if (x.status === "open") x.status = "rejected";
-    const now = nowIso();
-    const termsHash = sha256(canonical({ request: r.id, seller: thread.sellerId, buyer: r.buyerId, version: offer.version, terms: offer.terms }));
-    r.agreement = { threadId: thread.id, offerId: offer.id, version: offer.version, terms: offer.terms, termsHash, buyerSignedAt: now, sellerSignedAt: now, createdAt: now };
-    r.paypal.captureId = captureId;
-    r.paypal.capturedCents = offer.terms.priceCents;
-    r.paypal.feeCents = fees.feeCents;
-    r.paypal.feeBps = feeBps;
-    r.paypal.payoutCents = fees.payoutCents;
-    r.status = "agreed";
-    const seller = db.parties.find((p) => p.id === thread.sellerId)!;
-    const released = r.budgetCents - offer.terms.priceCents;
-    log(r, `Agreement v${offer.version} signed by both sides. Fingerprint ${termsHash.slice(0, 12)}…`);
-    log(
-      r,
-      `PayPal captured ${usd(offer.terms.priceCents)} for ${seller.name} (capture ${captureId}, ${captureStatus})${r.sample ? " (simulated)" : ""}` +
-        (released > 0 ? `; ${usd(released)} of the hold released to the buyer.` : "."),
-      "money",
-    );
-    return { status: r.status, seller: thread.sellerId, buyer: r.buyerId, title: r.title, price: offer.terms.priceCents };
-  }).then(async (x) => {
-    await mail(requestId, x.seller, `Deal agreed: ${x.title}`, `Your offer of ${usd(x.price)} was accepted and PayPal has captured the payment. Ship the item and mark it shipped in the deal room.`);
-    await mail(requestId, x.buyer, `Agreement signed: ${x.title}`, `PayPal captured ${usd(x.price)}. The seller is paid only after you receive and inspect the item.`);
-    return { status: x.status };
-  });
+  // 3. Record, re-checking everything once more.
+  let x;
+  try {
+    x = await commit(requestId, (r, db) => {
+      const { thread, offer } = stillOpen(r);
+      if (r.paypal.inflight?.token !== claimed.token) throw new Conflict("this acceptance timed out and was taken over; reload the deal");
+      delete r.paypal.inflight;
+      offer.status = "accepted";
+      for (const other of r.threads) for (const y of other.offers) if (y.status === "open") y.status = "rejected";
+      const now = nowIso();
+      const termsHash = sha256(canonical({ request: r.id, seller: thread.sellerId, buyer: r.buyerId, version: offer.version, terms: offer.terms }));
+      r.agreement = { threadId: thread.id, offerId: offer.id, version: offer.version, terms: offer.terms, termsHash, buyerSignedAt: now, sellerSignedAt: now, createdAt: now };
+      r.paypal.captureId = captureId;
+      r.paypal.capturedCents = offer.terms.priceCents;
+      r.paypal.feeCents = fees.feeCents;
+      r.paypal.feeBps = feeBps;
+      r.paypal.payoutCents = fees.payoutCents;
+      r.status = "agreed";
+      const seller = db.parties.find((p) => p.id === thread.sellerId)!;
+      const released = r.budgetCents - offer.terms.priceCents;
+      log(r, `Agreement v${offer.version} signed by both sides. Fingerprint ${termsHash.slice(0, 12)}…`);
+      log(
+        r,
+        `PayPal captured ${usd(offer.terms.priceCents)} for ${seller.name} (capture ${captureId}, ${captureStatus})${r.sample ? " (simulated)" : ""}` +
+          (released > 0 ? `; ${usd(released)} of the hold released to the buyer.` : "."),
+        "money",
+      );
+      return { status: r.status, seller: thread.sellerId, buyer: r.buyerId, title: r.title, price: offer.terms.priceCents };
+    });
+  } catch (e) {
+    // The marker is left to expire if PayPal already captured: nobody else can start a step meanwhile.
+    if (captureId === "SIMULATED") await unclaim(requestId, claimed.token);
+    else await flagForSupport(requestId, `PayPal captured ${usd(priceCents)} (capture ${captureId}) but the deal could not record it (${(e as Error).message.slice(0, 120)}).`);
+    throw e;
+  }
+  await mail(requestId, x.seller, `Deal agreed: ${x.title}`, `Your offer of ${usd(x.price)} was accepted and PayPal has captured the payment. Ship the item and mark it shipped in the deal room.`);
+  await mail(requestId, x.buyer, `Agreement signed: ${x.title}`, `PayPal captured ${usd(x.price)}. The seller is paid only after you receive and inspect the item.`);
+  return { status: x.status };
 }
 
 export function postMessage(requestId: string, meId: string, b: Record<string, unknown>) {
@@ -352,6 +432,7 @@ export function savePrivateLimit(requestId: string, meId: string, b: Record<stri
 export function ship(requestId: string, meId: string, b: Record<string, unknown>) {
   return commit(requestId, (r) => {
     if (r.status !== "agreed") throw new Conflict("nothing to ship");
+    notBusy(r); // a cancellation refund may be in flight
     const t = winningThread(r);
     if (t.sellerId !== meId) throw new Forbidden("only the seller can mark this shipped");
     const days = r.agreement!.terms.inspectionDays;
@@ -380,7 +461,8 @@ export function ship(requestId: string, meId: string, b: Record<string, unknown>
   });
 }
 
-async function payOut(requestId: string, payoutCents: number, why: string) {
+/** attempt 0 is the first payout (key payout-<req>); retry n sends key payout-<req>-<n>, persisted by retryPayout before it calls this. */
+async function payOut(requestId: string, payoutCents: number, why: string, attempt = 0) {
   const db = await read();
   const r = getRequest(db, requestId);
   const t = winningThread(r);
@@ -390,8 +472,7 @@ async function payOut(requestId: string, payoutCents: number, why: string) {
   const venmo = seller.payout?.method === "venmo" ? seller.payout.venmo : undefined;
   let to = venmo ? `Venmo ${venmo}` : seller.paypal ? `PayPal (connected account)` : `PayPal ${seller.paypalEmail}`;
   if (!r.sample && payoutCents > 0) {
-    const attempt = r.paypal.payoutAttempts ?? 0;
-    const key = attempt ? `payout-${r.id}-${attempt + 1}` : `payout-${r.id}`;
+    const key = attempt ? `payout-${r.id}-${attempt}` : `payout-${r.id}`;
     const base = { email: seller.paypalEmail, payerId: seller.paypal?.payerId, cents: payoutCents, note: `Clinch: "${r.title}". ${why}` };
     let out;
     try {
@@ -456,21 +537,39 @@ async function syncPayout(requestId: string) {
 
 /** Seller fixed their payout account: send the payout again (taking back an unclaimed one first). */
 export async function retryPayout(requestId: string, meId: string) {
-  const r = getRequest(await read(), requestId);
-  if (r.status !== "completed" || !r.paypal.payoutCents) throw new Conflict("nothing to pay out");
-  if (winningThread(r).sellerId !== meId && r.buyerId !== meId) throw new Forbidden("not your deal");
-  const st = r.paypal.payoutStatus ?? "";
-  if (!PAYOUT_PROBLEM.has(st) || ["BLOCKED", "DENIED", "REVERSED"].includes(st)) throw new Conflict(st === "SUCCESS" ? "the payout already arrived" : "this payout can't be retried here; contact support");
-  if (st === "UNCLAIMED" && r.paypal.payoutItemId) await cancelUnclaimedPayout(r.paypal.payoutItemId);
-  const { batch, status, to } = await payOut(requestId, r.paypal.payoutCents, `Payout retry. Price ${usd(r.paypal.capturedCents ?? 0)} minus platform fee ${usd(r.paypal.feeCents ?? 0)}.`);
-  return commit(requestId, (x) => {
+  const retryable = (x: WantRequest) => {
+    if (x.status !== "completed" || !x.paypal.payoutCents) throw new Conflict("nothing to pay out");
+    if (winningThread(x).sellerId !== meId && x.buyerId !== meId) throw new Forbidden("not your deal");
+    const st = x.paypal.payoutStatus ?? "";
+    if (!PAYOUT_PROBLEM.has(st) || ["BLOCKED", "DENIED", "REVERSED"].includes(st)) throw new Conflict(st === "SUCCESS" ? "the payout already arrived" : "this payout can't be retried here; contact support");
+    return st;
+  };
+  retryable(getRequest(await read(), requestId));
+  // The attempt number is persisted BEFORE PayPal is called, so every retry key is distinct (payout-<req>-1, -2, ...)
+  // and never equals the original payout-<req>, even if the process dies right after PayPal answered.
+  const claimed = await commit(requestId, (x) => {
+    const st = retryable(x);
+    const token = claim(x, "payout", "retry");
     x.paypal.payoutAttempts = (x.paypal.payoutAttempts ?? 0) + 1;
+    return { token, st, attempt: x.paypal.payoutAttempts, itemId: x.paypal.payoutItemId, cents: x.paypal.payoutCents!, price: x.paypal.capturedCents ?? 0, fee: x.paypal.feeCents ?? 0 };
+  });
+  let paid;
+  try {
+    if (claimed.st === "UNCLAIMED" && claimed.itemId) await cancelUnclaimedPayout(claimed.itemId);
+    paid = await payOut(requestId, claimed.cents, `Payout retry. Price ${usd(claimed.price)} minus platform fee ${usd(claimed.fee)}.`, claimed.attempt);
+  } catch (e) {
+    await unclaim(requestId, claimed.token);
+    throw e;
+  }
+  const { batch, status, to } = paid;
+  return commit(requestId, (x) => {
+    if (x.paypal.inflight?.token === claimed.token) delete x.paypal.inflight;
     x.paypal.payoutBatchId = batch;
     x.paypal.payoutStatus = undefined;
     x.paypal.payoutItemId = undefined;
     x.paypal.payoutCheckedAt = undefined;
     x.paypal.payoutTo = to;
-    log(x, `Payout sent again to ${to} (batch ${batch}, ${status}).`, "money");
+    log(x, `Payout sent again to ${to} (attempt ${claimed.attempt}, batch ${batch}, ${status}).`, "money");
     return { status: x.status };
   });
 }
@@ -479,22 +578,55 @@ export async function release(requestId: string, meId: string | null) {
   const c = meId ? await load(requestId, meId) : null;
   const r = c?.r ?? getRequest(await read(), requestId);
   if (c) mustBuyer(c);
-  if (r.status !== "shipped") throw new Conflict("nothing to release");
-  if (hasOpenPayPalDispute(r)) throw new Conflict("a PayPal dispute is open; the payout waits until PayPal resolves it");
-  if (!meId && r.delivery!.inspectionEndsAt > nowIso()) throw new Conflict("inspection window still running");
+  // Checked on the snapshot for a fast answer, and again on the fresh copy when the payout is claimed.
+  const releasable = (x: WantRequest) => {
+    if (x.status !== "shipped") throw new Conflict("nothing to release");
+    if (hasOpenPayPalDispute(x)) throw new Conflict("a PayPal dispute is open; the payout waits until PayPal resolves it");
+    if (x.paypal.payoutBatchId) throw new Conflict("the payout was already sent");
+    if (!meId && x.delivery!.inspectionEndsAt > nowIso()) throw new Conflict("inspection window still running");
+  };
+  releasable(r);
+  const token = await commit(requestId, (x) => {
+    releasable(x);
+    return claim(x, "payout", "release");
+  });
   const payout = r.paypal.payoutCents!;
-  const { batch, status, seller, to } = await payOut(requestId, payout, `Price ${usd(r.paypal.capturedCents!)} minus platform fee ${usd(r.paypal.feeCents!)}.`);
-  return commit(requestId, (x) => {
+  let paid;
+  try {
+    paid = await payOut(requestId, payout, `Price ${usd(r.paypal.capturedCents!)} minus platform fee ${usd(r.paypal.feeCents!)}.`);
+  } catch (e) {
+    await unclaim(requestId, token);
+    throw e;
+  }
+  const { batch, status, seller, to } = paid;
+  const out = await commit(requestId, (x) => {
+    if (x.paypal.inflight?.token === token) delete x.paypal.inflight;
     x.paypal.payoutTo = to;
     x.paypal.payoutBatchId = batch;
+    // PayPal has paid. If a dispute opened while it was in flight, do not rewrite the deal's state: record the payout and flag it.
+    if (x.status !== "shipped" || hasOpenPayPalDispute(x)) {
+      log(x, `Payout sent while the deal was ${x.status}${hasOpenPayPalDispute(x) ? " with a PayPal dispute open" : ""}: PayPal Payouts sent ${usd(payout)} to ${seller.name} via ${to} (batch ${batch}, ${status}). The deal was NOT marked completed. Support review needed.`, "warn");
+      return { status: x.status, completed: false };
+    }
     x.status = "completed";
     log(x, meId ? "Buyer accepted the delivery." : "Inspection window ended with no dispute: auto-accepted.");
     log(x, `PayPal Payouts sent ${usd(payout)} to ${seller.name} via ${to} (batch ${batch}, ${status})${x.sample ? " (simulated)" : ""}; platform fee ${usd(x.paypal.feeCents!)}.`, "money");
-    return { status: x.status };
-  }).then(async (out) => {
-    await mail(requestId, seller.id, `You've been paid: ${r.title}`, `PayPal Payouts sent ${usd(payout)} to your ${to}. Leave a review for the buyer in the deal room.`);
-    return out;
+    return { status: x.status, completed: true };
   });
+  if (!out.completed) {
+    adminAlert(`Payout sent while dispute opened - support review: ${r.title}`, { Request: requestId, Batch: batch, Status: out.status }, `${siteUrl()}/r/${requestId}`);
+    return { status: out.status };
+  }
+  await mail(requestId, seller.id, `You've been paid: ${r.title}`, `PayPal Payouts sent ${usd(payout)} to your ${to}. Leave a review for the buyer in the deal room.`);
+  return { status: out.status };
+}
+
+/** tick moves money (auto-release, hold renewal): only someone in this deal may ask for it. Guests and strangers get 403. */
+export async function assertParticipant(requestId: string, meId: string) {
+  const db = await read();
+  if (!db.parties.some((p) => p.id === meId)) throw new Forbidden("Sign in to do this");
+  const r = getRequest(db, requestId);
+  if (r.buyerId !== meId && !r.threads.some((t) => t.sellerId === meId)) throw new Forbidden("not your deal");
 }
 
 /** Auto-release when the inspection window has passed. Safe to call repeatedly. */
@@ -505,7 +637,13 @@ export async function tick(requestId: string) {
     await syncDisputes(requestId);
     r = getRequest(await read(), requestId);
   }
-  if (r.status === "shipped" && r.delivery && r.delivery.inspectionEndsAt <= nowIso() && !hasOpenPayPalDispute(r)) return release(requestId, null);
+  if (r.status === "shipped" && r.delivery && r.delivery.inspectionEndsAt <= nowIso() && !hasOpenPayPalDispute(r)) {
+    // Another tab or a webhook may be paying out right now; that is not an error for this caller.
+    return release(requestId, null).catch(async (e) => {
+      if (e instanceof Conflict) return { status: getRequest(await read(), requestId).status };
+      throw e;
+    });
+  }
   if (r.status === "open") await freshHold(requestId);
   if (r.status === "completed") await syncPayout(requestId);
   return { status: r.status };
@@ -515,6 +653,7 @@ export function openDispute(requestId: string, meId: string, b: Record<string, u
   return commit(requestId, (r) => {
     if (r.buyerId !== meId) throw new Forbidden("only the buyer can open a dispute");
     if (r.status !== "shipped") throw new Conflict("disputes open during the inspection window");
+    notBusy(r); // a payout may already be on its way
     if (r.delivery!.inspectionEndsAt < nowIso()) throw new Conflict("the inspection window has ended");
     const reason = String(b.reason ?? "other") as Dispute["reason"];
     const description = String(b.description ?? "").trim().slice(0, 2000);
@@ -541,6 +680,7 @@ export function proposeSettlement(requestId: string, meId: string, b: Record<str
   return commit(requestId, (r) => {
     if (r.status !== "disputed" || !r.dispute) throw new Conflict("no open dispute");
     if (winningThread(r).sellerId !== meId) throw new Forbidden("only the seller can propose a settlement");
+    notBusy(r); // the buyer may be accepting the current proposal right now
     if (refundCents > r.paypal.capturedCents!) throw new BadInput("refund can't exceed what the buyer paid");
     r.dispute.proposal = { refundCents, note: String(b.note ?? "").slice(0, 500), at: nowIso() };
     log(r, `Seller proposed a settlement: refund ${usd(refundCents)} to the buyer.`);
@@ -552,32 +692,55 @@ export function proposeSettlement(requestId: string, meId: string, b: Record<str
 export async function acceptSettlement(requestId: string, meId: string) {
   const c = await load(requestId, meId);
   mustBuyer(c);
-  const r = c.r;
-  if (r.status !== "disputed" || !r.dispute?.proposal) throw new Conflict("no settlement to accept");
-  const refundCents = r.dispute.proposal.refundCents;
-  const paid = r.paypal.capturedCents!;
-  const fees = feeBreakdown(paid - refundCents, r.paypal.feeBps);
+  // Checked on the snapshot for a fast answer, and again on the fresh copy when the settlement is claimed.
+  const settleable = (x: WantRequest) => {
+    if (x.status !== "disputed" || !x.dispute?.proposal) throw new Conflict("no settlement to accept");
+    if (hasOpenPayPalDispute(x)) throw new Conflict("A PayPal dispute is open on this payment. It has to be resolved in PayPal first.");
+    if (x.paypal.payoutBatchId) throw new Conflict("A payout was already sent for this deal. Contact Clinch support.");
+    if (x.dispute.proposal.refundCents > x.paypal.capturedCents!) throw new Conflict("The refund can't exceed what the buyer paid.");
+    return { refundCents: x.dispute.proposal.refundCents, paid: x.paypal.capturedCents!, feeBps: x.paypal.feeBps, captureId: x.paypal.captureId, title: x.title };
+  };
+  settleable(c.r);
+  const claimed = await commit(requestId, (x) => ({ ...settleable(x), token: claim(x, "settle", "settlement") }));
+  const { refundCents, paid } = claimed;
+  const fees = feeBreakdown(paid - refundCents, claimed.feeBps);
   let refundId = "SIMULATED";
   let refundStatus = "COMPLETED";
-  if (refundCents > 0 && !r.sample) {
-    const ref = await refundCapture(r.paypal.captureId!, `Clinch dispute settlement: ${r.title}`, refundCents === paid ? undefined : refundCents);
-    refundId = ref.refundId;
-    refundStatus = ref.status;
+  let pay;
+  try {
+    if (refundCents > 0 && !c.r.sample) {
+      const ref = await refundCapture(claimed.captureId!, `Clinch dispute settlement: ${claimed.title}`, refundCents === paid ? undefined : refundCents);
+      refundId = ref.refundId;
+      refundStatus = ref.status;
+    }
+    pay = await payOut(requestId, fees.payoutCents, `Settled dispute: price ${usd(paid)}, refunded ${usd(refundCents)}, fee ${usd(fees.feeCents)}.`);
+  } catch (e) {
+    // Same refund/payout keys on the next try: PayPal dedups whichever half already went through.
+    await unclaim(requestId, claimed.token);
+    throw e;
   }
-  const { batch, status, seller, to } = await payOut(requestId, fees.payoutCents, `Settled dispute: price ${usd(paid)}, refunded ${usd(refundCents)}, fee ${usd(fees.feeCents)}.`);
-  return commit(requestId, (x) => {
-    if (refundCents > 0) x.paypal.refunds.push({ id: refundId, cents: refundCents, status: refundStatus });
-    x.paypal.payoutCents = fees.payoutCents;
-    x.paypal.feeCents = fees.feeCents;
-    x.paypal.payoutBatchId = fees.payoutCents > 0 ? batch : undefined;
-    x.dispute!.resolution = { refundCents, payoutCents: fees.payoutCents, at: nowIso(), how: "agreed" };
-    x.status = fees.payoutCents > 0 ? "completed" : "cancelled";
-    log(x, `Dispute settled by agreement.`);
-    if (refundCents > 0) log(x, `PayPal refunded ${usd(refundCents)} to the buyer (refund ${refundId}, ${refundStatus})${x.sample ? " (simulated)" : ""}.`, "money");
-    if (fees.payoutCents > 0) x.paypal.payoutTo = to;
-    if (fees.payoutCents > 0) log(x, `PayPal Payouts sent ${usd(fees.payoutCents)} to ${seller.name} via ${to} (batch ${batch}, ${status})${x.sample ? " (simulated)" : ""}.`, "money");
-    return { status: x.status };
-  });
+  const { batch, status, seller, to } = pay;
+  try {
+    return await commit(requestId, (x) => {
+      if (x.status !== "disputed" || x.paypal.inflight?.token !== claimed.token) throw new Conflict("this settlement timed out and was taken over; reload the deal");
+      delete x.paypal.inflight;
+      if (refundCents > 0 && !x.paypal.refunds.some((f) => f.id === refundId)) x.paypal.refunds.push({ id: refundId, cents: refundCents, status: refundStatus });
+      x.paypal.payoutCents = fees.payoutCents;
+      x.paypal.feeCents = fees.feeCents;
+      x.paypal.payoutBatchId = fees.payoutCents > 0 ? batch : undefined;
+      x.dispute!.resolution = { refundCents, payoutCents: fees.payoutCents, at: nowIso(), how: "agreed" };
+      x.status = fees.payoutCents > 0 ? "completed" : "cancelled";
+      log(x, `Dispute settled by agreement.`);
+      if (refundCents > 0) log(x, `PayPal refunded ${usd(refundCents)} to the buyer (refund ${refundId}, ${refundStatus})${x.sample ? " (simulated)" : ""}.`, "money");
+      if (fees.payoutCents > 0) x.paypal.payoutTo = to;
+      if (fees.payoutCents > 0) log(x, `PayPal Payouts sent ${usd(fees.payoutCents)} to ${seller.name} via ${to} (batch ${batch}, ${status})${x.sample ? " (simulated)" : ""}.`, "money");
+      return { status: x.status };
+    });
+  } catch (e) {
+    if (c.r.sample) await unclaim(requestId, claimed.token);
+    else await flagForSupport(requestId, `PayPal refunded ${usd(refundCents)} and sent ${usd(fees.payoutCents)} (batch ${batch}) for the settlement but the deal could not record it (${(e as Error).message.slice(0, 120)}).`);
+    throw e;
+  }
 }
 
 export async function cancel(requestId: string, meId: string) {
@@ -586,28 +749,65 @@ export async function cancel(requestId: string, meId: string) {
   const r = c.r;
   if (r.status === "draft") {
     return commit(requestId, (x) => {
+      if (x.status !== "draft") throw new Conflict("this request is no longer a draft");
       x.status = "cancelled";
       log(x, "Cancelled before the budget was held.");
       return { status: x.status };
     });
   }
   if (r.status === "open") {
-    if (!r.sample && r.paypal.authorizationId) await voidAuthorization(r.paypal.authorizationId);
-    return commit(requestId, (x) => {
-      x.status = "cancelled";
-      for (const t of x.threads) for (const o of t.offers) if (o.status === "open") o.status = "rejected";
-      log(x, `Request cancelled. PayPal hold voided${x.sample ? " (simulated)" : ""}; the buyer was never charged.`, "money");
-      return { status: x.status };
+    // Claim first: an acceptance mid-capture blocks this (and vice versa), so a deal can't be both cancelled and agreed.
+    const claimed = await commit(requestId, (x) => {
+      if (x.status !== "open") throw new Conflict("this request is no longer open");
+      return { token: claim(x, "void", "hold"), authorizationId: x.paypal.authorizationId };
     });
+    try {
+      if (!r.sample && claimed.authorizationId) await voidAuthorization(claimed.authorizationId);
+    } catch (e) {
+      await unclaim(requestId, claimed.token);
+      throw e;
+    }
+    try {
+      return await commit(requestId, (x) => {
+        if (x.status !== "open" || x.paypal.inflight?.token !== claimed.token) throw new Conflict("this cancellation timed out and was taken over; reload the deal");
+        delete x.paypal.inflight;
+        x.status = "cancelled";
+        for (const t of x.threads) for (const o of t.offers) if (o.status === "open") o.status = "rejected";
+        log(x, `Request cancelled. PayPal hold voided${x.sample ? " (simulated)" : ""}; the buyer was never charged.`, "money");
+        return { status: x.status };
+      });
+    } catch (e) {
+      if (r.sample) await unclaim(requestId, claimed.token);
+      else await flagForSupport(requestId, `The PayPal hold was voided but the request could not be marked cancelled (${(e as Error).message.slice(0, 120)}).`);
+      throw e;
+    }
   }
   if (r.status === "agreed") {
-    const ref = r.sample ? { refundId: "SIMULATED", status: "COMPLETED" } : await refundCapture(r.paypal.captureId!, `Clinch refund: ${r.title}`);
-    return commit(requestId, (x) => {
-      x.paypal.refunds.push({ id: ref.refundId, cents: x.paypal.capturedCents!, status: ref.status });
-      x.status = "cancelled";
-      log(x, `Cancelled before shipping. PayPal refunded ${usd(x.paypal.capturedCents!)} in full (refund ${ref.refundId}, ${ref.status})${x.sample ? " (simulated)" : ""}.`, "money");
-      return { status: x.status };
+    const claimed = await commit(requestId, (x) => {
+      if (x.status !== "agreed") throw new Conflict("this deal is no longer waiting to ship");
+      return { token: claim(x, "refund", "cancel"), captureId: x.paypal.captureId };
     });
+    let ref;
+    try {
+      ref = r.sample ? { refundId: "SIMULATED", status: "COMPLETED" } : await refundCapture(claimed.captureId!, `Clinch refund: ${r.title}`);
+    } catch (e) {
+      await unclaim(requestId, claimed.token);
+      throw e;
+    }
+    try {
+      return await commit(requestId, (x) => {
+        if (x.status !== "agreed" || x.paypal.inflight?.token !== claimed.token) throw new Conflict("this cancellation timed out and was taken over; reload the deal");
+        delete x.paypal.inflight;
+        if (!x.paypal.refunds.some((f) => f.id === ref.refundId)) x.paypal.refunds.push({ id: ref.refundId, cents: x.paypal.capturedCents!, status: ref.status });
+        x.status = "cancelled";
+        log(x, `Cancelled before shipping. PayPal refunded ${usd(x.paypal.capturedCents!)} in full (refund ${ref.refundId}, ${ref.status})${x.sample ? " (simulated)" : ""}.`, "money");
+        return { status: x.status };
+      });
+    } catch (e) {
+      if (r.sample) await unclaim(requestId, claimed.token);
+      else await flagForSupport(requestId, `PayPal refunded the capture in full (refund ${ref.refundId}) but the request could not be marked cancelled (${(e as Error).message.slice(0, 120)}).`);
+      throw e;
+    }
   }
   throw new Conflict(`can't cancel once the item has shipped; open a dispute instead`);
 }

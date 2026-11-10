@@ -19,7 +19,7 @@ let cached: { token: string; expires: number } | null = null;
 async function token(): Promise<string> {
   if (cached && cached.expires > Date.now() + 60_000) return cached.token;
   const { id, secret } = creds();
-  const res = await fetch(`${BASE}/v1/oauth2/token`, {
+  const res = await pfetch(`${BASE}/v1/oauth2/token`, {
     method: "POST",
     headers: {
       Authorization: "Basic " + Buffer.from(`${id}:${secret}`).toString("base64"),
@@ -40,6 +40,20 @@ export class PayPalError extends Error {
   }
 }
 
+const PAYPAL_TIMEOUT_MS = 15_000;
+
+/** fetch with a deadline: a hung PayPal connection must not hold a request (or a payment lock) open. A timeout surfaces as a PayPalError. */
+async function pfetch(url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(PAYPAL_TIMEOUT_MS) });
+  } catch (e) {
+    if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
+      throw new PayPalError(504, {}, `PayPal did not answer within ${PAYPAL_TIMEOUT_MS / 1000}s (${init.method ?? "GET"} ${new URL(url).pathname})`);
+    }
+    throw e;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PayPal JSON is loosely typed
 async function call<T = any>(method: string, path: string, body?: unknown, idempotencyKey?: string): Promise<T> {
   const headers: Record<string, string> = {
@@ -48,7 +62,7 @@ async function call<T = any>(method: string, path: string, body?: unknown, idemp
     Prefer: "return=representation",
   };
   if (idempotencyKey) headers["PayPal-Request-Id"] = idempotencyKey;
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await pfetch(`${BASE}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -130,13 +144,17 @@ export async function authorizeOrder(orderId: string, requestId: string) {
   return { authorizationId: auth.id as string, status: auth.status as string, expires: auth.expiration_time as string | undefined };
 }
 
-/** Take the winning bid amount from the hold; final_capture releases the rest of the hold. */
-export async function captureAuthorization(authorizationId: string, cents: number, invoiceId: string) {
+/**
+ * Take the winning bid amount from the hold; final_capture releases the rest of the hold.
+ * The idempotency key names the offer (id + version), so a retry of the same acceptance dedups at PayPal
+ * but a different offer on the same authorization can never be answered with another offer's capture.
+ */
+export async function captureAuthorization(authorizationId: string, cents: number, invoiceId: string, offerKey: string) {
   const res = await call(
     "POST",
     `/v2/payments/authorizations/${authorizationId}/capture`,
     { amount: money(cents), final_capture: true, invoice_id: invoiceId },
-    `cap-${authorizationId}`,
+    `cap-${authorizationId}-${offerKey}`,
   );
   return { captureId: res.id as string, status: res.status as string };
 }
@@ -200,7 +218,7 @@ export async function verifyWebhook(headers: Headers, rawEvent: string, webhookI
     webhook_id: webhookId,
   };
   const body = JSON.stringify(meta).slice(0, -1) + `,"webhook_event":${rawEvent}}`;
-  const res = await fetch(`${BASE}/v1/notifications/verify-webhook-signature`, {
+  const res = await pfetch(`${BASE}/v1/notifications/verify-webhook-signature`, {
     method: "POST",
     headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" },
     body,
@@ -232,7 +250,7 @@ export type PayPalIdentity = { payerId: string; email: string; emailConfirmed: b
 /** Exchange the authorization code for a user token, then read the PayPal account's identity. */
 export async function paypalIdentity(code: string): Promise<PayPalIdentity> {
   const { id, secret } = creds();
-  const tok = await fetch(`${BASE}/v1/oauth2/token`, {
+  const tok = await pfetch(`${BASE}/v1/oauth2/token`, {
     method: "POST",
     headers: { Authorization: "Basic " + Buffer.from(`${id}:${secret}`).toString("base64"), "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ grant_type: "authorization_code", code }),
@@ -240,7 +258,7 @@ export async function paypalIdentity(code: string): Promise<PayPalIdentity> {
   });
   const t = await tok.json().catch(() => ({}));
   if (!tok.ok || !t.access_token) throw new Error(`PayPal login failed: ${tok.status} ${t.error_description ?? t.error ?? ""}`.trim());
-  const res = await fetch(`${BASE}/v1/identity/oauth2/userinfo?schema=paypalv1.1`, { headers: { Authorization: `Bearer ${t.access_token}` }, cache: "no-store" });
+  const res = await pfetch(`${BASE}/v1/identity/oauth2/userinfo?schema=paypalv1.1`, { headers: { Authorization: `Bearer ${t.access_token}` }, cache: "no-store" });
   const u = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`PayPal userinfo failed: ${res.status}`);
   const emails: { value: string; primary?: boolean; confirmed?: boolean }[] = Array.isArray(u.emails) ? u.emails : u.email ? [{ value: u.email, primary: true, confirmed: u.email_verified }] : [];
@@ -365,7 +383,7 @@ export function disputedCaptureIds(resource: Record<string, unknown>): string[] 
 async function multipart(path: string, input: unknown) {
   const form = new FormData();
   form.append("input", new Blob([JSON.stringify(input)], { type: "application/json" }), "input.json");
-  const res = await fetch(`${BASE}${path}`, { method: "POST", headers: { Authorization: `Bearer ${await token()}` }, body: form, cache: "no-store" });
+  const res = await pfetch(`${BASE}${path}`, { method: "POST", headers: { Authorization: `Bearer ${await token()}` }, body: form, cache: "no-store" });
   const text = await res.text();
   const json = text ? JSON.parse(text) : {};
   if (!res.ok) throw new PayPalError(res.status, json, `PayPal POST ${path} failed: ${res.status} ${json?.details?.[0]?.issue ?? json?.name ?? ""} ${json?.message ?? ""}`.trim());
