@@ -3,6 +3,7 @@
 import type { Address, Db, Match, Party, Thread, WantRequest } from "./types";
 import { canServe, publicArea, reachShort } from "./domain/location";
 import { feeBpsFor, isPro } from "./pro";
+import { demoOnRealDeal } from "./store";
 
 export type PartyLite = Pick<Party, "id" | "name" | "handle" | "city" | "role" | "bio" | "categories" | "joinedAt"> & { payoutVerified: boolean; paypalConnected: boolean; paypalVerified: boolean; pro: boolean };
 
@@ -79,12 +80,14 @@ const hidePayTo = (to?: string) => to?.replace(/^PayPal .+@.+$/, "PayPal").repla
 export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView {
   const buyer = db.parties.find((p) => p.id === r.buyerId)!;
   const role = r.buyerId === viewer.id ? "buyer" : viewer.role === "seller" ? "seller" : "visitor";
-  const visible = role === "buyer" ? r.threads : r.threads.filter((t) => t.sellerId === viewer.id);
-  const mine = role === "seller" ? r.threads.find((t) => t.sellerId === viewer.id) : undefined;
+  // A shared demo account on a real buyer's deal is a stranger to it: no thread, address, delivery or PayPal data of the real parties.
+  const demoOnReal = demoOnRealDeal(db, r, viewer);
+  const visible = role === "buyer" ? r.threads : demoOnReal ? [] : r.threads.filter((t) => t.sellerId === viewer.id);
+  const mine = role === "seller" && !demoOnReal ? r.threads.find((t) => t.sellerId === viewer.id) : undefined;
   const { buyerTargetCents, matches, shipTo } = r;
   // Double-blind reviews: until both sides submit, a viewer sees only their own.
   const winningSellerId = r.agreement ? r.threads.find((t) => t.id === r.agreement!.threadId)?.sellerId : undefined;
-  const isWinningSeller = role === "seller" && winningSellerId === viewer.id;
+  const isWinningSeller = role === "seller" && !demoOnReal && winningSellerId === viewer.id;
   const myReviewRole = role === "buyer" ? "buyer" : isWinningSeller ? "seller" : null;
   const reviews = r.reviews.length === 2 ? r.reviews : r.reviews.filter((x) => x.by === myReviewRole);
   const seesAddress = role === "buyer" || isWinningSeller;

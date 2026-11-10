@@ -4,7 +4,7 @@ import "server-only";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import type { Db, WantRequest } from "./types";
+import type { Db, Party, WantRequest } from "./types";
 import { DEMO_ADDRESSES, seedDb } from "./seed";
 
 const DOC_ID = "clinch";
@@ -111,6 +111,11 @@ export function getRequest(db: Db, requestId: string): WantRequest {
   const r = db.requests.find((x) => x.id === requestId);
   if (!r) throw new NotFound("request not found");
   return r;
+}
+
+/** A shared demo account facing a real (non-demo) buyer's deal. Anyone can sign in as a demo account, so it may only touch demo deals. */
+export function demoOnRealDeal(db: Db, r: WantRequest, party: Party | undefined): boolean {
+  return !!party?.demo && !db.parties.find((p) => p.id === r.buyerId)?.demo;
 }
 
 export function log(r: WantRequest, text: string, kind: "info" | "money" | "warn" = "info") {

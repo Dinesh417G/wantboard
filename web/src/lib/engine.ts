@@ -4,7 +4,7 @@ import "server-only";
 import { canServe, reachShort } from "./domain/location";
 import { acceptDisputeClaim, addTracking, cancelUnclaimedPayout, CARRIERS, disputesForCapture, getDispute, getPayout, provideDisputeEvidence, reauthorize, type Carrier, type PayPalDispute } from "./paypal";
 import { PayPalError, authorizeOrder, captureAuthorization, createAuthorizeOrder, orderStatus, payoutSeller, refundCapture, voidAuthorization } from "./paypal";
-import { Conflict, Forbidden, NotFound, getRequest, id, log, mutate, nowIso, read, sha256 } from "./store";
+import { Conflict, Forbidden, NotFound, demoOnRealDeal, getRequest, id, log, mutate, nowIso, read, sha256 } from "./store";
 import { canonical, diffTerms, summarizeDiff, validateTerms, type Terms } from "./domain/offers";
 import { feeBreakdown, usd, parseDollars } from "./domain/money";
 import { scanMessage } from "./domain/scam-shield";
@@ -23,11 +23,17 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 type Ctx = { db: Db; r: WantRequest; me: Party };
 
+/** Every deal action passes through here (load() or a commit callback): shared demo accounts may only act on demo deals. */
+function demoGate(db: Db, r: WantRequest, meId: string | null) {
+  if (meId && demoOnRealDeal(db, r, db.parties.find((p) => p.id === meId))) throw new Forbidden("Demo accounts can only act on demo deals");
+}
+
 async function load(requestId: string, meId: string): Promise<Ctx> {
   const db = await read();
   const r = getRequest(db, requestId);
   const me = db.parties.find((p) => p.id === meId);
   if (!me) throw new Forbidden("Sign in to do this");
+  demoGate(db, r, meId);
   return { db, r, me };
 }
 
@@ -240,6 +246,7 @@ export async function makeOffer(requestId: string, meId: string, b: Record<strin
     // Re-check on the fresh copy: the request may have been cancelled or agreed since the pre-read above.
     if (r.status !== "open") throw new Conflict("this request is not taking offers");
     notBusy(r); // an acceptance or cancellation is mid-PayPal-call: don't change the offers under it
+    demoGate(db, r, meId);
     let thread: Thread;
     let by: "buyer" | "seller";
     if (r.buyerId === meId) {
@@ -293,6 +300,7 @@ export function respondOffer(requestId: string, meId: string, b: Record<string, 
     const o = t?.offers.find((x) => x.id === b.offerId);
     if (!t || !o) throw new NotFound("offer not found");
     if (o.status !== "open") throw new Conflict("offer is no longer open");
+    demoGate(db, r, meId);
     notBusy(r); // the offer may be the one being captured right now
     const myRole = r.buyerId === meId ? "buyer" : t.sellerId === meId ? "seller" : null;
     if (!myRole) throw new Forbidden("not your negotiation");
@@ -402,7 +410,8 @@ export async function acceptOffer(requestId: string, meId: string, b: Record<str
 export function postMessage(requestId: string, meId: string, b: Record<string, unknown>) {
   const text = String(b.text ?? "").trim().slice(0, 2000);
   if (!text) throw new BadInput("message is empty");
-  return commit(requestId, (r) => {
+  return commit(requestId, (r, db) => {
+    demoGate(db, r, meId);
     const t = threadOf(r, b.threadId);
     const by = r.buyerId === meId ? "buyer" : t.sellerId === meId ? "seller" : null;
     if (!by) throw new Forbidden("not your negotiation");
@@ -417,7 +426,8 @@ export function postMessage(requestId: string, meId: string, b: Record<string, u
 export function savePrivateLimit(requestId: string, meId: string, b: Record<string, unknown>) {
   const cents = b.amount === "" || b.amount == null ? undefined : parseDollars(b.amount);
   if (cents === null) throw new BadInput("Enter a valid amount");
-  return commit(requestId, (r) => {
+  return commit(requestId, (r, db) => {
+    demoGate(db, r, meId);
     if (r.buyerId === meId) r.buyerTargetCents = cents;
     else {
       const t = threadOf(r, b.threadId);
@@ -431,7 +441,8 @@ export function savePrivateLimit(requestId: string, meId: string, b: Record<stri
 // ---------- Delivery, release, disputes ----------
 
 export function ship(requestId: string, meId: string, b: Record<string, unknown>) {
-  return commit(requestId, (r) => {
+  return commit(requestId, (r, db) => {
+    demoGate(db, r, meId);
     if (r.status !== "agreed") throw new Conflict("nothing to ship");
     notBusy(r); // a cancellation refund may be in flight
     const t = winningThread(r);
@@ -545,7 +556,10 @@ export async function retryPayout(requestId: string, meId: string) {
     if (!PAYOUT_PROBLEM.has(st) || ["BLOCKED", "DENIED", "REVERSED"].includes(st)) throw new Conflict(st === "SUCCESS" ? "the payout already arrived" : "this payout can't be retried here; contact support");
     return st;
   };
-  retryable(getRequest(await read(), requestId));
+  const db0 = await read();
+  const r0 = getRequest(db0, requestId);
+  demoGate(db0, r0, meId);
+  retryable(r0);
   // The attempt number is persisted BEFORE PayPal is called, so every retry key is distinct (payout-<req>-1, -2, ...)
   // and never equals the original payout-<req>, even if the process dies right after PayPal answered.
   const claimed = await commit(requestId, (x) => {
@@ -627,6 +641,7 @@ export async function assertParticipant(requestId: string, meId: string) {
   const db = await read();
   if (!db.parties.some((p) => p.id === meId)) throw new Forbidden("Sign in to do this");
   const r = getRequest(db, requestId);
+  demoGate(db, r, meId);
   if (r.buyerId !== meId && !r.threads.some((t) => t.sellerId === meId)) throw new Forbidden("not your deal");
 }
 
@@ -651,7 +666,8 @@ export async function tick(requestId: string) {
 }
 
 export function openDispute(requestId: string, meId: string, b: Record<string, unknown>) {
-  return commit(requestId, (r) => {
+  return commit(requestId, (r, db) => {
+    demoGate(db, r, meId);
     if (r.buyerId !== meId) throw new Forbidden("only the buyer can open a dispute");
     if (r.status !== "shipped") throw new Conflict("disputes open during the inspection window");
     notBusy(r); // a payout may already be on its way
@@ -678,7 +694,8 @@ export function openDispute(requestId: string, meId: string, b: Record<string, u
 export function proposeSettlement(requestId: string, meId: string, b: Record<string, unknown>) {
   const refundCents = parseDollars(b.refund);
   if (refundCents === null) throw new BadInput("Enter a refund amount");
-  return commit(requestId, (r) => {
+  return commit(requestId, (r, db) => {
+    demoGate(db, r, meId);
     if (r.status !== "disputed" || !r.dispute) throw new Conflict("no open dispute");
     if (winningThread(r).sellerId !== meId) throw new Forbidden("only the seller can propose a settlement");
     notBusy(r); // the buyer may be accepting the current proposal right now
@@ -814,7 +831,8 @@ export async function cancel(requestId: string, meId: string) {
 }
 
 export function review(requestId: string, meId: string, b: Record<string, unknown>) {
-  return commit(requestId, (r) => {
+  return commit(requestId, (r, db) => {
+    demoGate(db, r, meId);
     if (r.status !== "completed") throw new Conflict("reviews open after the deal completes");
     const role = r.buyerId === meId ? "buyer" : winningThread(r).sellerId === meId ? "seller" : null;
     if (!role) throw new Forbidden("not your deal");
@@ -892,7 +910,9 @@ export const hasOpenPayPalDispute = (r: WantRequest) => !!r.paypal.dispute && r.
 
 /** Seller answers a PayPal dispute: send tracking/proof, or accept the claim (PayPal refunds the buyer). */
 export async function respondPayPalDispute(requestId: string, meId: string, b: Record<string, unknown>) {
-  const r = getRequest(await read(), requestId);
+  const db0 = await read();
+  const r = getRequest(db0, requestId);
+  demoGate(db0, r, meId);
   const d = r.paypal.dispute;
   if (!d || d.status === "RESOLVED") throw new Conflict("no open PayPal dispute");
   if (!r.agreement || winningThread(r).sellerId !== meId) throw new Forbidden("only the seller can answer the PayPal dispute");
