@@ -268,7 +268,7 @@ export async function paypalIdentity(code: string): Promise<PayPalIdentity> {
   return {
     payerId,
     email: String(main?.value ?? "").toLowerCase(),
-    emailConfirmed: main?.confirmed !== false,
+    emailConfirmed: main?.confirmed === true,
     name: String(u.name ?? [u.given_name, u.family_name].filter(Boolean).join(" ")).trim(),
     verified: u.verified_account === true || u.verified_account === "true",
     address: fromPayPalAddress(u.address),
