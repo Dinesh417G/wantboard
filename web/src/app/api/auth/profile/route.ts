@@ -7,6 +7,10 @@ import { CATEGORIES, type Category, type Party, type PayPalLink, type Address } 
 import { parseAddress } from "@/lib/domain/location";
 import { adminAlert, siteUrl } from "@/lib/email";
 
+/** Same place on the map: an address keeps source "paypal" only if no part that reach checks was edited. */
+const samePlace = (a: Address | undefined, b: Address) =>
+  !!a && [a.line1, a.city, a.state, a.zip].join("|").toLowerCase() === [b.line1, b.city, b.state, b.zip].join("|").toLowerCase();
+
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
 function fields(b: Record<string, unknown>) {
@@ -64,7 +68,7 @@ export async function POST(req: Request) {
     if (existing) return signup.paypal ? null : existing.id;
     const { address, ...rest } = f;
     const p: Party = { id: id("p"), handle, joinedAt: nowIso(), email: signup.email, ...rest, categories: [...f.categories] };
-    if (address) p.address = { ...address, source: signup.address && address.line1 === signup.address.line1 ? "paypal" : "manual" };
+    if (address) p.address = { ...address, source: samePlace(signup.address, address) ? "paypal" : "manual" };
     if (signup.paypal && !db.parties.some((x) => x.paypal?.payerId === signup.paypal!.payerId)) {
       p.paypal = signup.paypal;
       if (!p.paypalEmail) p.paypalEmail = signup.paypal.email;
@@ -93,7 +97,7 @@ export async function PATCH(req: Request) {
     if (!p) return;
     const { address, ...rest } = f;
     Object.assign(p, { ...rest, categories: [...f.categories] });
-    if (address) p.address = { ...address, source: p.address?.line1 === address.line1 && p.address.zip === address.zip ? p.address.source : "manual" };
+    if (address) p.address = { ...address, source: p.address && samePlace(p.address, address) ? p.address.source : "manual" };
   });
   return NextResponse.json({ ok: true });
 }
