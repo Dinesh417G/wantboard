@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
-import { cookieOpts, makeToken, PP_STATE_COOKIE, sessionPartyId } from "@/lib/auth";
+import { cookieOpts, makeToken, PP_STATE_COOKIE, safeNext, sessionPartyId } from "@/lib/auth";
 import { paypalLoginUrl } from "@/lib/paypal";
 import { paypalRedirectUri, siteUrl } from "@/lib/email";
 
@@ -8,8 +8,7 @@ import { paypalRedirectUri, siteUrl } from "@/lib/email";
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const mode = url.searchParams.get("mode") === "link" ? "link" : "login";
-  const rawNext = url.searchParams.get("next") ?? "";
-  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : mode === "link" ? "/settings" : "/dashboard";
+  const next = safeNext(url.searchParams.get("next"), mode === "link" ? "/settings" : "/dashboard");
   const pid = mode === "link" ? await sessionPartyId() : null;
   if (mode === "link" && !pid) return NextResponse.redirect(new URL(`/login?next=/settings`, siteUrl()));
 

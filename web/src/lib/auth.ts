@@ -61,6 +61,45 @@ export const sessionCookie = (partyId: string) => ({
   ...cookieOpts(SESSION_DAYS * 86400),
 });
 
+// ---------- post-sign-in redirect target ----------
+
+/** True if `s` is a same-site path: one leading "/", then not "/" or "\", no backslash, no control characters. */
+function plainPath(s: string): boolean {
+  if (s.length > 2000 || s[0] !== "/" || s[1] === "/" || s[1] === "\\") return false;
+  // Browsers treat "\" as "/" in http(s) URLs and strip tab/CR/LF, so each one can turn "/x" into "//host".
+  if (/[\\\x00-\x1f\x7f]/.test(s)) return false;
+  return true;
+}
+
+/**
+ * Validate the ?next= value that sends a user somewhere after sign-in. Returns `raw` when it is a same-site path,
+ * otherwise `fallback`. Rejects "//host", "/\host", control characters (CR/LF/tab) and anything that only becomes
+ * one of those after percent-decoding. Accepts non-strings (a repeated ?next=a&next=b arrives as an array).
+ */
+export function safeNext(raw: unknown, fallback = "/"): string {
+  if (typeof raw !== "string") return fallback;
+  let s = raw;
+  let stable = false;
+  for (let i = 0; i < 4 && !stable; i++) {
+    if (!plainPath(s)) return fallback;
+    let dec: string;
+    try {
+      dec = decodeURIComponent(s);
+    } catch {
+      return fallback; // malformed %-escape
+    }
+    stable = dec === s;
+    s = dec;
+  }
+  if (!stable) return fallback; // still changing after 4 decodes: nested encoding, not a normal path
+  try {
+    if (new URL(raw, "http://clinch.invalid").origin !== "http://clinch.invalid") return fallback;
+  } catch {
+    return fallback;
+  }
+  return raw;
+}
+
 // ---------- one-time codes ----------
 
 export const normalizeEmail = (e: unknown) => (typeof e === "string" ? e.trim().toLowerCase() : "");
