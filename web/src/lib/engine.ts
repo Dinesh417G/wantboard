@@ -875,10 +875,13 @@ export async function applyPayPalDispute(requestId: string, d: PayPalDispute) {
     if (prev && prev.status === d.status && prev.updatedAt === d.updatedAt) return null;
     r.paypal.dispute = { ...prev, ...d };
     const what = `PayPal dispute ${d.id} (${disputeReason(d.reason)}, ${usd(d.amountCents)}, ${d.stage.toLowerCase()})`;
+    // No payout reserve (owner decision): a dispute that arrives after the seller was paid is only flagged for support.
+    const afterPayout = !prev && (r.status === "completed" || !!r.paypal.payoutBatchId);
     if (!prev) log(r, `Buyer opened ${what} in PayPal. Seller payout is paused until it's resolved.`, "warn");
     else if (d.status === "RESOLVED") log(r, `${what} resolved${d.outcome ? `: ${d.outcome.toLowerCase().replace(/_/g, " ")}` : ""}.`, "money");
     else log(r, `${what} is now ${d.status.toLowerCase().replace(/_/g, " ")}.`, "warn");
-    return { opened: !prev, resolved: d.status === "RESOLVED" && prev?.status !== "RESOLVED", buyer: r.buyerId, seller: r.agreement ? winningThread(r).sellerId : undefined, title: r.title };
+    if (afterPayout) log(r, "PayPal dispute opened after payout - support review", "money");
+    return { opened: !prev, afterPayout, resolved: d.status === "RESOLVED" && prev?.status !== "RESOLVED", buyer: r.buyerId, seller: r.agreement ? winningThread(r).sellerId : undefined, title: r.title };
   });
   if (!out || (!out.opened && !out.resolved)) return;
   const subject = out.opened ? `PayPal dispute opened: ${out.title}` : `PayPal dispute resolved: ${out.title}`;
@@ -887,7 +890,7 @@ export async function applyPayPalDispute(requestId: string, d: PayPalDispute) {
     : `PayPal resolved the dispute${d.outcome ? ` (${d.outcome.toLowerCase().replace(/_/g, " ")})` : ""}.`;
   if (out.seller) await mail(requestId, out.seller, subject, text);
   await mail(requestId, out.buyer, subject, text);
-  adminAlert(subject, { Request: requestId, Dispute: d.id, Reason: disputeReason(d.reason), Amount: usd(d.amountCents), Status: d.status }, `${siteUrl()}/r/${requestId}`);
+  adminAlert(out.afterPayout ? `PayPal dispute opened after payout - support review: ${out.title}` : subject, { Request: requestId, Dispute: d.id, Reason: disputeReason(d.reason), Amount: usd(d.amountCents), Status: d.status, ...(out.afterPayout ? { Note: "The seller was already paid out; no reserve is held." } : {}) }, `${siteUrl()}/r/${requestId}`);
 }
 
 /** Look up PayPal disputes for this deal's capture (no webhook needed). Throttled to once every 5 minutes. */
