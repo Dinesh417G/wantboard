@@ -93,8 +93,9 @@ export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView 
   const p = r.paypal;
   const winner = winningSellerId ? db.parties.find((x) => x.id === winningSellerId) : undefined;
   const secrets = [winner?.paypalEmail, winner?.paypal?.email, winner?.payout?.venmo].filter((x): x is string => !!x);
-  // Money trail: the buyer sees it all. A negotiating seller sees only the money lines: the rest names the other sellers' offers.
-  const events = role === "buyer" ? r.events : mine ? r.events.filter((e) => e.kind === "money") : [];
+  // Money trail: the buyer sees all of it. The winning seller sees the money lines only (the rest names the other sellers'
+  // offers). Sellers who did not win, and every visitor, see none: it names the winner's payout and the buyer's PayPal ids.
+  const events = role === "buyer" ? r.events : isWinningSeller ? r.events.filter((e) => e.kind === "money") : [];
   return {
     id: r.id,
     code: r.code,
@@ -111,8 +112,7 @@ export function viewRequest(db: Db, r: WantRequest, viewer: Party): RequestView 
     createdAt: r.createdAt,
     sample: r.sample,
     agreement: r.agreement,
-    delivery: insider ? r.delivery : undefined,
-    dispute: insider ? r.dispute : undefined,
+    ...(insider ? { delivery: r.delivery, dispute: r.dispute } : {}),
     events: events.map((e) => ({ ...e, text: scrub(e.text, secrets) })),
     paypal: {
       capturedCents: p.capturedCents,

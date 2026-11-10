@@ -327,12 +327,13 @@ export async function acceptOffer(requestId: string, meId: string, b: Record<str
   const fees = feeBreakdown(priceCents, feeBps);
 
   // Everything above ran on a snapshot. This runs on the fresh copy, both when claiming and when recording.
-  const stillOpen = (r: WantRequest) => {
+  // `recording`: an offer that merely ran out its clock while PayPal was capturing still counts, the buyer accepted it in time.
+  const stillOpen = (r: WantRequest, recording = false) => {
     if (r.status !== "open" || r.paypal.captureId) throw new Conflict("this request is not open");
     const thread = r.threads.find((x) => x.id === t.id);
     const offer = thread?.offers.find((x) => x.id === o.id);
     if (!thread || !offer) throw new NotFound("offer not found");
-    if (offer.status !== "open" || offer.id !== thread.offers.at(-1)?.id || offer.version !== version)
+    if (!(offer.status === "open" || (recording && offer.status === "expired")) || offer.id !== thread.offers.at(-1)?.id || offer.version !== version)
       throw new Conflict("That offer changed or expired. Review the latest version before accepting.");
     return { thread, offer };
   };
@@ -362,7 +363,7 @@ export async function acceptOffer(requestId: string, meId: string, b: Record<str
   let x;
   try {
     x = await commit(requestId, (r, db) => {
-      const { thread, offer } = stillOpen(r);
+      const { thread, offer } = stillOpen(r, true);
       if (r.paypal.inflight?.token !== claimed.token) throw new Conflict("this acceptance timed out and was taken over; reload the deal");
       delete r.paypal.inflight;
       offer.status = "accepted";
