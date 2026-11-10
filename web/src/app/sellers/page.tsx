@@ -21,7 +21,7 @@ export default async function Sellers() {
       <div className="text-xs uppercase tracking-wider text-brand-2">Sellers</div>
       <h1 className="mt-1 text-4xl font-semibold tracking-tight">Who&apos;s competing for your deals</h1>
       <p className="mt-2 max-w-2xl text-muted">
-        Every score is built only from paid, completed deals on {`Clinch`}. Open a profile to see exactly how it&apos;s calculated.
+        Scores combine PayPal verification, paid completed deals, on-time delivery, ratings and dispute record. A seller with no deals yet starts at 30 to 50 (PayPal identity plus neutral defaults) and moves with real deals. Open a profile to see exactly how it&apos;s calculated.
       </p>
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {sellers.map(({ p, s }) => (

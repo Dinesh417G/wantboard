@@ -104,7 +104,7 @@ export default async function Profile({ params }: Props) {
         <div className="mt-8 grid gap-6 md:grid-cols-2">
           <Card className="p-6">
             <h2 className="font-medium">How the score is built</h2>
-            <p className="mt-1 text-xs text-dim">Only paid, completed deals count. Every part is shown.</p>
+            <p className="mt-1 text-xs text-dim">Built from PayPal verification, completed deals, on-time delivery, ratings and disputes. With no deals yet, neutral defaults apply. Every part is shown.</p>
             <div className="mt-5 space-y-4">
               {s.parts.map((x) => (
                 <div key={x.label}>

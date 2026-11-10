@@ -34,7 +34,7 @@ const PILLARS = [
   { icon: Sparkles, title: "A copilot that works for you only", text: "Summaries, counter suggestions and risk flags. It sees your private limit, never the other side's." },
   { icon: MessageSquareWarning, title: "Scam shield", text: "Flags Zelle, Venmo, gift cards, phone numbers and “pay me directly” before anyone loses money." },
   { icon: Scale, title: "Disputes with evidence", text: "The agreement, offers, chat and delivery proof are already in one place. Settle with a partial refund." },
-  { icon: BadgeCheck, title: "Portable trust profile", text: "Score built from real, paid deals: on-time rate, ratings, dispute record. Each part shown, not a black box." },
+  { icon: BadgeCheck, title: "Portable trust profile", text: "Score from PayPal verification, completed deals, on-time rate, ratings and dispute record. Each part shown, not a black box." },
 ];
 
 type Cell = "yes" | "part" | "no";
