@@ -35,7 +35,7 @@ function Row({ r, right, note }: { r: WantRequest; right?: React.ReactNode; note
 
 function Section({ icon: Icon, title, count, children }: { icon: typeof Sparkles; title: string; count: number; children: React.ReactNode }) {
   return (
-    <Card className="p-6">
+    <Card className="min-w-0 p-6">
       <div className="flex items-center gap-2">
         <Icon className="size-4 text-brand-2" />
         <h2 className="font-medium">{title}</h2>
@@ -76,7 +76,7 @@ function SellerDash({ db, me }: { db: Db; me: Party }) {
           </Card>
         ))}
       </div>
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Section icon={Sparkles} title="Matched for you" count={matched.length}>
           {matched.map(({ r, m }) => (
             <Row
@@ -130,7 +130,7 @@ function BuyerDash({ db, me }: { db: Db; me: Party }) {
           </Card>
         ))}
       </div>
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Section icon={Hourglass} title="Needs your action" count={needs.length}>
           {needs.map((r) => (
             <Row

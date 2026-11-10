@@ -105,6 +105,12 @@ body {
   letter-spacing: -0.01em;
 }
 
+/* User-written text (titles, bios, chat, offer notes) must wrap inside its box instead of widening the page.
+   "anywhere" also lowers the min-content size, so grid/flex items holding a long unbroken string can shrink. */
+main {
+  overflow-wrap: anywhere;
+}
+
 input[type="date"]::-webkit-calendar-picker-indicator {
   filter: invert(0.8);
 }
