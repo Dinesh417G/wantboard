@@ -59,7 +59,9 @@ export async function POST(req: Request) {
 
   const partyId = await mutate((db) => {
     const existing = db.parties.find((p) => p.email === signup.email);
-    if (existing) return existing.id;
+    // An email-code sign-up has proved the mailbox, so it may resume its account. A PayPal sign-up has not: refuse
+    // to hand an existing account to a PayPal identity here (the callback already did the verified-email check).
+    if (existing) return signup.paypal ? null : existing.id;
     const { address, ...rest } = f;
     const p: Party = { id: id("p"), handle, joinedAt: nowIso(), email: signup.email, ...rest, categories: [...f.categories] };
     if (address) p.address = { ...address, source: signup.address && address.line1 === signup.address.line1 ? "paypal" : "manual" };
@@ -70,6 +72,7 @@ export async function POST(req: Request) {
     db.parties.push(p);
     return p.id;
   });
+  if (!partyId) return NextResponse.json({ error: "That email already has a Clinch account. Sign in with your email code, then link PayPal in Settings." }, { status: 409 });
   adminAlert(`New ${f.role} account: ${f.name}`, { Name: f.name, Role: f.role, Email: signup.email, City: f.city, "PayPal email": f.paypalEmail || signup.paypal?.email || "—", "Signed up with": signup.paypal ? "PayPal" : "email code", Categories: f.categories.join(", ") || "—" }, `${siteUrl()}/u/${handle}`);
   const res = NextResponse.json({ ok: true });
   res.cookies.set(sessionCookie(partyId));
