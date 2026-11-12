@@ -21,3 +21,10 @@ Thumbs.db
 
 # Claude Code session files and private notes
 .claude/
+
+# demo video build (clips, voice, renders)
+video/public/clips/
+video/public/voiceover.*
+video/public/edit*.json
+video/out/
+video/*.mp4
