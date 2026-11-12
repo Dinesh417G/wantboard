@@ -15,13 +15,16 @@ Built for the [PayPal AI Hackathon 2026](https://paypalaihackathon.devpost.com/)
 - **Deal room**: sellers send versioned offers (price, delivery, warranty, condition, shipping, inspection days). Every counter
   shows a diff ("Price −4.5%, delivery +3 days"), offers expire for real, and "Accept" names the exact version, so stale offers are refused.
 - **Private limits**: buyer target / seller floor, visible only to their owner and their own copilot.
-- **AI copilot** (Vercel AI Gateway, Claude): summarize, suggest a counter inside your private limit, risk-check the latest offer.
-  Drafts only; it never sends, accepts or pays. Falls back to labelled heuristics if the gateway is unavailable.
+- **AI copilot** (gpt-oss-120b on Groq): summarize, suggest a counter inside your private limit; gpt-oss-20b risk-checks the
+  latest offer, suggests the category and scores sellers for the matchmaker. Drafts only; it never sends, accepts or pays.
+  Price comparisons are computed in code. Falls back to labelled heuristics if the model is unavailable.
+- **Clinch Agent** (PayPal Agent Toolkit + gpt-oss-120b): reads this deal's PayPal order, tracking and disputes (read-only, pinned
+  to the deal's IDs) and counters or messages for you. Accepting (a PayPal capture) always needs your confirmation.
 - **Agreement fingerprint**: the accepted terms are hashed (SHA-256 of canonical JSON) and shown to both sides.
 - **Inspection window, disputes, settlements**: payment freezes on dispute; seller proposes a partial refund; buyer accepts.
 - **Scam shield**: flags Zelle/Venmo/gift cards, phone numbers and "pay me directly" in chat.
 - **Trust profile**: transparent score from paid, completed deals; double-blind reviews.
-- **Demo identities**: switch between the buyer and sellers from the header. Seeded "sample" deals simulate PayPal steps and say so;
+- **Demo identities**: switch between the buyer and sellers from the account menu. Seeded "sample" deals simulate PayPal steps and say so;
   requests you create use the real PayPal sandbox.
 
 ## For judges: try it in 3 minutes
@@ -84,9 +87,11 @@ Sandbox test accounts for judges are listed in the Devpost submission.
 
 ## Stack
 
-Next.js 15 (App Router, TypeScript, Tailwind v4, Motion), PayPal REST APIs (Orders v2, Authorizations, Captures,
-Refunds, Payouts, Webhooks) and the PayPal JS SDK (`@paypal/react-paypal-js`, Pay Later enabled), Supabase Postgres
-(state behind secret-gated RPCs), Vercel Blob (photos), Google Gemini or Vercel AI Gateway (copilot and matchmaker).
+Next.js 15 (App Router, TypeScript, Tailwind v4, Motion), PayPal REST APIs (Orders v2 with authorize, capture, void,
+reauthorize and tracking; Captures and Refunds; Payouts; Disputes; Subscriptions; Webhooks; Log in with PayPal), the PayPal
+JS SDK (`@paypal/react-paypal-js`: Buttons, Venmo, Pay Later messages), PayPal Agent Toolkit (`@paypal/agent-toolkit`),
+gpt-oss-120b and gpt-oss-20b on Groq (copilot, matchmaker, agent; any OpenAI-compatible provider works, see `.env.example`),
+Supabase Postgres (state behind secret-gated RPCs), Vercel Blob (photos), Resend (email).
 
 ## Licence
 
