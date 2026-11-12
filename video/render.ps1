@@ -56,7 +56,8 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $voice = @('public\voiceover.wav', 'public\voiceover.mp3', 'public\voiceover.m4a') | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $voice -and $SapiVoice) {
   Write-Host 'Making a voice-over with the Windows voice...' -ForegroundColor Cyan
-  $txt = (Resolve-Path 'out\narration.txt').Path
+  $src = if (Test-Path 'out\tts-input.txt') { 'out\tts-input.txt' } else { 'out\narration.txt' }  # tts-input = spoken spellings
+  $txt = (Resolve-Path $src).Path
   $wav = Join-Path $PSScriptRoot 'public\voiceover.wav'
   powershell.exe -NoProfile -Command "Add-Type -AssemblyName System.Speech; `$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; `$v = `$s.GetInstalledVoices() | Where-Object { `$_.VoiceInfo.Culture.Name -like 'en-*' } | Select-Object -First 1; if (`$v) { `$s.SelectVoice(`$v.VoiceInfo.Name) }; `$s.Rate = 1; `$s.SetOutputToWaveFile('$wav'); `$s.Speak([IO.File]::ReadAllText('$txt')); `$s.Dispose()"
   node tools\prep.mjs
